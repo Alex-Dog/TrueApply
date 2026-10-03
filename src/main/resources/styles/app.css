@@ -1,0 +1,80 @@
+/* App-specific styling on top of the AtlantaFX theme. Colors use the theme's looked-up
+   variables so light and dark modes both work. */
+
+.sidebar {
+    -fx-background-color: -color-bg-subtle;
+    -fx-border-color: transparent -color-border-default transparent transparent;
+    -fx-border-width: 0 1 0 0;
+}
+
+.brand {
+    -fx-text-fill: -color-accent-fg;
+}
+
+.nav-button {
+    -fx-background-color: transparent;
+    -fx-background-radius: 6;
+    -fx-border-color: transparent;
+    -fx-padding: 8 12 8 12;
+    -fx-alignment: center-left;
+    -fx-font-size: 1.05em;
+}
+
+.nav-button:hover {
+    -fx-background-color: -color-bg-default;
+}
+
+.nav-button:selected {
+    -fx-background-color: -color-accent-subtle;
+    -fx-text-fill: -color-accent-fg;
+}
+
+.nav-button:selected .label,
+.nav-button:selected .ikonli-font-icon {
+    -fx-text-fill: -color-accent-fg;
+    -fx-icon-color: -color-accent-fg;
+}
+
+.nav-section {
+    -fx-font-weight: bold;
+}
+
+.chip {
+    -fx-padding: 2 8 2 8;
+    -fx-background-radius: 10;
+    -fx-font-size: 0.85em;
+    -fx-font-weight: bold;
+}
+
+.chip-accent {
+    -fx-background-color: -color-accent-subtle;
+    -fx-text-fill: -color-accent-fg;
+}
+
+.chip-success {
+    -fx-background-color: -color-success-subtle;
+    -fx-text-fill: -color-success-fg;
+}
+
+.chip-warning {
+    -fx-background-color: -color-warning-subtle;
+    -fx-text-fill: -color-warning-fg;
+}
+
+.chip-danger {
+    -fx-background-color: -color-danger-subtle;
+    -fx-text-fill: -color-danger-fg;
+}
+
+.chip-neutral {
+    -fx-background-color: -color-neutral-subtle;
+    -fx-text-fill: -color-fg-muted;
+}
+
+.wrapping-cell-text {
+    -fx-fill: -color-fg-default;
+}
+
+.onboarding {
+    -fx-background-color: -color-bg-default;
+}

@@ -1,0 +1,20 @@
+target/
+*.class
+*.log
+
+# IDEs
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Secrets — never commit these
+google-credentials.json
+src/main/resources/google-credentials.json
+.env
