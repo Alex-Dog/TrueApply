@@ -9,6 +9,7 @@ import com.trueapply.ats.PlatformRegistry;
 import com.trueapply.ats.SubmissionContext;
 import com.trueapply.ats.SubmissionResult;
 import com.trueapply.browser.BrowserLauncher;
+import com.trueapply.db.AccountRepository;
 import com.trueapply.db.ApplicationRepository;
 import com.trueapply.db.JobRepository;
 import com.trueapply.db.ProfileRepository;
@@ -53,6 +54,7 @@ public class ApplicationPipeline {
     });
 
     private final ApplicationRepository applications;
+    private final AccountRepository accounts;
     private final JobRepository jobs;
     private final ProfileRepository profiles;
     private final AppSettings settings;
@@ -62,10 +64,12 @@ public class ApplicationPipeline {
     private final VerificationCodeSource verificationCodes;
     private final AppEvents events;
 
-    public ApplicationPipeline(ApplicationRepository applications, JobRepository jobs, ProfileRepository profiles,
+    public ApplicationPipeline(ApplicationRepository applications, AccountRepository accounts,
+                               JobRepository jobs, ProfileRepository profiles,
                                AppSettings settings, PlatformRegistry platforms, Supplier<AiProvider> ai,
                                BrowserLauncher browser, VerificationCodeSource verificationCodes, AppEvents events) {
         this.applications = applications;
+        this.accounts = accounts;
         this.jobs = jobs;
         this.profiles = profiles;
         this.settings = settings;
@@ -157,18 +161,18 @@ public class ApplicationPipeline {
             app.jobDescriptionHtml = form.jobDescriptionHtml();
             app.companyDescriptionHtml = form.companyDescriptionHtml();
 
+            if (!platform.questionsUpfront()) {
+                // Questions only appear inside the site's wizard; the browser walk finds and answers them.
+                setStatus(app, ApplicationStatus.READY, "Opening the application wizard…");
+                submit(app.id);
+                return;
+            }
+
             setStatus(app, ApplicationStatus.ANALYZING, "Answering factual questions…");
             new FormAnswerer(ai.get()).answer(app.fields, profile, app.job);
 
             if (app.pendingHumanFields(settings.includeOptionalCreative()) > 0) {
-                setStatus(app, ApplicationStatus.ANALYZING, "Summarizing the role…");
-                try {
-                    JobOverview overview = new JobSummarizer(ai.get())
-                            .summarize(app.job, app.jobDescriptionHtml, app.companyDescriptionHtml);
-                    app.overviewJson = Json.write(overview);
-                } catch (RuntimeException e) {
-                    app.overviewJson = null; // the raw description is still shown
-                }
+                summarizeIfNeeded(app);
                 setStatus(app, ApplicationStatus.NEEDS_INPUT, null);
             } else {
                 setStatus(app, ApplicationStatus.READY, "Queued for submission");
@@ -192,7 +196,12 @@ public class ApplicationPipeline {
         boolean visible = settings.showBrowser();
         setStatus(app, ApplicationStatus.SUBMITTING, "Opening browser…");
 
-        SubmissionResult result = platform.submit(app, context(app, profile, visible));
+        SubmissionResult result;
+        try {
+            result = platform.submit(app, context(app, profile, visible));
+        } catch (RuntimeException e) { // e.g. the AI call for newly discovered questions failed
+            result = SubmissionResult.failed(e.getMessage());
+        }
         if (result.outcome() == SubmissionResult.Outcome.NEEDS_HUMAN && !visible) {
             setStatus(app, ApplicationStatus.SUBMITTING, result.message() + " Opening a visible browser so you can finish…");
             result = platform.submit(app, context(app, profile, true));
@@ -207,7 +216,23 @@ public class ApplicationPipeline {
                 app.submittedAt = Instant.now();
                 setStatus(app, ApplicationStatus.DRY_RUN, result.message());
             }
+            case NEEDS_INPUT -> {
+                summarizeIfNeeded(app);
+                setStatus(app, ApplicationStatus.NEEDS_INPUT, result.message());
+            }
             case NEEDS_HUMAN, FAILED -> setStatus(app, ApplicationStatus.FAILED, result.message());
+        }
+    }
+
+    private void summarizeIfNeeded(JobApplication app) {
+        if (app.overviewJson != null) return;
+        setStatus(app, app.status, "Summarizing the role…");
+        try {
+            JobOverview overview = new JobSummarizer(ai.get())
+                    .summarize(app.job, app.jobDescriptionHtml, app.companyDescriptionHtml);
+            app.overviewJson = Json.write(overview);
+        } catch (RuntimeException e) {
+            app.overviewJson = null; // the raw description is still shown
         }
     }
 
@@ -217,7 +242,11 @@ public class ApplicationPipeline {
                     app.statusMessage = message;
                     applications.save(app);
                     events.fireChanged();
-                });
+                },
+                fields -> new FormAnswerer(ai.get()).answer(fields, profile, app.job),
+                settings.includeOptionalCreative(),
+                accounts,
+                settings.createWorkdayAccounts());
     }
 
     /** Optional questions nobody answered are skipped rather than blocking submission. */

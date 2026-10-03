@@ -39,7 +39,8 @@ class SourcesTest {
         var ashby = AtsUrls.detect("https://jobs.ashbyhq.com/ramp/0b1c2d3e-4f50-6789-abcd-ef0123456789").orElseThrow();
         assertEquals(AtsType.ASHBY, ashby.ats());
 
-        assertTrue(AtsUrls.detect("https://acme.wd1.myworkdayjobs.com/en-US/careers/job/123").isEmpty());
+        assertEquals(AtsType.WORKDAY, AtsUrls.detect("https://acme.wd1.myworkdayjobs.com/en-US/careers/job/123").orElseThrow().ats());
+        assertTrue(AtsUrls.detect("https://jobs.smartrecruiters.com/Acme/123").isEmpty());
     }
 
     @Test

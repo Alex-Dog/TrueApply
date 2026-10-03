@@ -4,6 +4,7 @@ import com.trueapply.ai.AiProvider;
 import com.trueapply.ai.AiProviders;
 import com.trueapply.ats.PlatformRegistry;
 import com.trueapply.ats.greenhouse.GreenhousePlatform;
+import com.trueapply.ats.workday.WorkdayPlatform;
 import com.trueapply.browser.BrowserLauncher;
 import com.trueapply.db.AccountRepository;
 import com.trueapply.db.ApplicationRepository;
@@ -15,6 +16,7 @@ import com.trueapply.discovery.AdzunaJobSource;
 import com.trueapply.discovery.DiscoveryService;
 import com.trueapply.discovery.GreenhouseJobSource;
 import com.trueapply.discovery.SimplifyJobsSource;
+import com.trueapply.discovery.WorkdayJobSource;
 import com.trueapply.email.GmailService;
 import com.trueapply.pipeline.ApplicationPipeline;
 import com.trueapply.security.Vault;
@@ -49,13 +51,16 @@ public final class AppContext implements AutoCloseable {
         applications = new ApplicationRepository(database, jobs);
         accounts = new AccountRepository(database, new Vault(AppPaths.vaultKey()));
         gmail = new GmailService(settings);
-        platforms = new PlatformRegistry().register(new GreenhousePlatform());
-        // Greenhouse boards last: it also scans boards the other sources led us to.
+        platforms = new PlatformRegistry()
+                .register(new GreenhousePlatform())
+                .register(new WorkdayPlatform());
+        // Board/site scans last: they also cover companies the list sources led us to.
         discovery = new DiscoveryService(List.of(
                 new SimplifyJobsSource(),
                 new AdzunaJobSource(settings),
-                new GreenhouseJobSource(settings)), jobs, profiles, settings);
-        pipeline = new ApplicationPipeline(applications, jobs, profiles, settings, platforms, this::ai,
+                new GreenhouseJobSource(settings),
+                new WorkdayJobSource(settings)), jobs, profiles, settings);
+        pipeline = new ApplicationPipeline(applications, accounts, jobs, profiles, settings, platforms, this::ai,
                 new BrowserLauncher(settings), gmail, events);
         reloadAi();
     }

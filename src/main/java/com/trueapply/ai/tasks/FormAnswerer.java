@@ -144,7 +144,9 @@ public class FormAnswerer {
     private static boolean applySavedAnswer(FormField field, UserProfile profile) {
         String saved = profile.savedAnswers.get(Text.normalize(field.label));
         if (Text.isBlank(saved)) return false;
-        if (field.type == FieldType.SINGLE_SELECT) {
+        if (field.type == FieldType.SINGLE_SELECT && field.options.isEmpty()) {
+            field.answer = saved; // options only known in the browser (e.g. Workday pickers)
+        } else if (field.type == FieldType.SINGLE_SELECT) {
             Optional<String> match = matchOption(field, saved);
             if (match.isEmpty()) return false;
             field.answer = match.get();

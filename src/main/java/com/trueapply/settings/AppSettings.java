@@ -7,6 +7,14 @@ import java.util.List;
 
 /** Typed accessors for user-facing settings. */
 public class AppSettings {
+    /** Workday career sites as "tenant.wdN/Site|Company"; all verified to answer the public job API. */
+    public static final List<String> DEFAULT_WORKDAY_SITES = List.of(
+            "nvidia.wd5/NVIDIAExternalCareerSite|NVIDIA", "salesforce.wd12/External_Career_Site|Salesforce",
+            "intel.wd1/External|Intel", "adobe.wd5/external_experienced|Adobe",
+            "mastercard.wd1/CorporateCareers|Mastercard", "workday.wd5/Workday|Workday",
+            "capitalone.wd12/Capital_One|Capital One", "pg.wd5/1000|Procter & Gamble",
+            "boeing.wd1/EXTERNAL_CAREERS|Boeing", "cisco.wd5/Cisco_Careers|Cisco");
+
     public static final List<String> DEFAULT_GREENHOUSE_BOARDS = List.of(
             "airbnb", "anthropic", "asana", "brex", "chime", "cloudflare", "coinbase", "databricks", "datadog",
             "discord", "dropbox", "duolingo", "elastic", "figma", "gitlab", "gusto", "instacart", "lyft",
@@ -95,6 +103,57 @@ public class AppSettings {
 
     public void clearLearnedGreenhouseBoards() {
         repo.put("greenhouse.learnedBoards", "");
+    }
+
+    /** Configured Workday sites: board ("tenant.wdN/Site") → company name (may be blank). */
+    public java.util.Map<String, String> workdaySites() {
+        return parseSites(repo.get("workday.sites").map(Text::splitList).orElse(DEFAULT_WORKDAY_SITES));
+    }
+
+    public void setWorkdaySites(List<String> lines) {
+        repo.put("workday.sites", String.join("\n", lines));
+    }
+
+    public List<String> workdaySiteLines() {
+        return repo.get("workday.sites").map(Text::splitList).orElse(DEFAULT_WORKDAY_SITES);
+    }
+
+    /** Workday sites spotted in other sources' results (board → company). */
+    public java.util.Map<String, String> learnedWorkdaySites() {
+        return parseSites(repo.get("workday.learnedSites").map(Text::splitList).orElse(List.of()));
+    }
+
+    public void addLearnedWorkdaySites(java.util.Map<String, String> sites) {
+        java.util.Map<String, String> all = new java.util.TreeMap<>(learnedWorkdaySites());
+        all.putAll(sites);
+        repo.put("workday.learnedSites", String.join("\n",
+                all.entrySet().stream().map(e -> e.getKey() + "|" + e.getValue()).toList()));
+    }
+
+    public void clearLearnedWorkdaySites() {
+        repo.put("workday.learnedSites", "");
+    }
+
+    private static java.util.Map<String, String> parseSites(List<String> lines) {
+        java.util.Map<String, String> sites = new java.util.LinkedHashMap<>();
+        for (String line : lines) {
+            int bar = line.indexOf('|');
+            String board = (bar < 0 ? line : line.substring(0, bar)).trim();
+            if (!board.isEmpty()) sites.put(board, bar < 0 ? "" : line.substring(bar + 1).trim());
+        }
+        return sites;
+    }
+
+    /**
+     * Whether TrueApply may create Workday candidate accounts by itself. Doing so ticks the
+     * company's "I agree" box for account terms, so it is off until the user opts in.
+     */
+    public boolean createWorkdayAccounts() {
+        return bool("workday.createAccounts", false);
+    }
+
+    public void setCreateWorkdayAccounts(boolean value) {
+        putBool("workday.createAccounts", value);
     }
 
     public List<String> greenhouseBoards() {

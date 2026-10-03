@@ -55,8 +55,11 @@ public class FieldEditor {
                     combo.setValue(field.answer);
                     combo.setMaxWidth(Double.MAX_VALUE);
                     combo.setDisable(!editable);
+                    // Searchable site pickers (Workday "prompt") also accept a typed value to search for.
+                    boolean typeable = "prompt".equals(field.control);
+                    combo.setEditable(typeable);
                     node = combo;
-                    value = combo::getValue;
+                    value = typeable ? () -> combo.getEditor().getText() : combo::getValue;
                     focusTarget = combo;
                 }
             }

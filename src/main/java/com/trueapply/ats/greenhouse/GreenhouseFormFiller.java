@@ -7,8 +7,10 @@ import com.microsoft.playwright.TimeoutError;
 import com.microsoft.playwright.options.AriaRole;
 import com.microsoft.playwright.options.SelectOption;
 import com.microsoft.playwright.options.WaitForSelectorState;
+import com.trueapply.ats.OptionMatcher;
 import com.trueapply.ats.SubmissionContext;
 import com.trueapply.ats.SubmissionResult;
+import com.trueapply.browser.PageBanner;
 import com.trueapply.model.FieldCategory;
 import com.trueapply.model.FormField;
 import com.trueapply.model.JobApplication;
@@ -46,6 +48,8 @@ final class GreenhouseFormFiller {
     private final JobApplication app;
     private final SubmissionContext ctx;
     private final List<String> problems = new ArrayList<>();
+    /** What the user should do while we wait on them; shown in the app and on the page. */
+    private String bannerText = "please finish the application in this window and press Submit.";
 
     GreenhouseFormFiller(Page page, JobApplication app, SubmissionContext ctx) {
         this.page = page;
@@ -84,7 +88,7 @@ final class GreenhouseFormFiller {
             String message = "Filled " + filled + " fields; not submitted because dry run is on."
                     + (problems.isEmpty() ? "" : " Couldn't fill: " + String.join("; ", problems));
             if (ctx.visible()) {
-                ctx.progress().accept("Dry run — review the form, then close the browser window.");
+                waitingFor("dry run is on, so nothing was submitted. Review the filled form, then close this window.");
                 waitForClose(HUMAN_TIMEOUT);
             }
             return SubmissionResult.dryRun(message);
@@ -93,7 +97,7 @@ final class GreenhouseFormFiller {
         if (!problems.isEmpty()) {
             String summary = String.join("; ", problems);
             if (!ctx.visible()) return SubmissionResult.needsHuman("Couldn't fill: " + summary);
-            ctx.progress().accept("Please finish these in the browser and press Submit: " + summary);
+            waitingFor("please finish these in this window and press Submit: " + summary);
             return waitForConfirmation(HUMAN_TIMEOUT);
         }
         return submitAndConfirm();
@@ -271,38 +275,7 @@ final class GreenhouseFormFiller {
     }
 
     static int bestMatch(List<String> optionTexts, String value) {
-        String wanted = matchKey(value);
-        if (wanted.isEmpty()) return -1;
-        List<String> keys = optionTexts.stream().map(GreenhouseFormFiller::matchKey).toList();
-        for (int i = 0; i < keys.size(); i++) if (keys.get(i).equals(wanted)) return i;
-        // Shortest wins, so "United States" picks "United States +1" over "United States Minor Outlying Islands".
-        int prefix = shortest(keys, o -> o.startsWith(wanted));
-        if (prefix >= 0) return prefix;
-        int contains = shortest(keys, o -> o.contains(wanted));
-        if (contains >= 0) return contains;
-        // "Computer Science and Engineering" → "Computer Science": the longest option inside the value.
-        int best = -1;
-        for (int i = 0; i < keys.size(); i++) {
-            String k = keys.get(i);
-            if (k.length() >= 4 && (" " + wanted + " ").contains(" " + k + " ")
-                    && (best < 0 || k.length() > keys.get(best).length())) {
-                best = i;
-            }
-        }
-        return best;
-    }
-
-    /** Normalized with punctuation as spaces, so "UC, Berkeley" ≈ "UC - Berkeley" and "Ph.D." ≈ "Ph D". */
-    private static String matchKey(String s) {
-        return Text.normalize(s).replaceAll("[^a-z0-9+#]+", " ").trim();
-    }
-
-    private static int shortest(List<String> options, java.util.function.Predicate<String> test) {
-        int best = -1;
-        for (int i = 0; i < options.size(); i++) {
-            if (test.test(options.get(i)) && (best < 0 || options.get(i).length() < options.get(best).length())) best = i;
-        }
-        return best;
+        return OptionMatcher.bestMatch(optionTexts, value);
     }
 
     // ---- submitting ----------------------------------------------------------------------
@@ -323,7 +296,7 @@ final class GreenhouseFormFiller {
             }
             if (captchaVisible()) {
                 if (!ctx.visible()) return SubmissionResult.needsHuman("The site showed a captcha.");
-                ctx.progress().accept("Please solve the captcha in the browser window.");
+                waitingFor("please solve the captcha in this window.");
                 return waitForConfirmation(HUMAN_TIMEOUT);
             }
             page.waitForTimeout(1_000);
@@ -331,7 +304,7 @@ final class GreenhouseFormFiller {
         String errors = String.join("; ", visibleErrors());
         String reason = errors.isEmpty() ? "The form didn't confirm the submission." : "The form reported: " + errors;
         if (!ctx.visible()) return SubmissionResult.needsHuman(reason);
-        ctx.progress().accept(reason + " Fix it in the browser and press Submit.");
+        waitingFor(reason + " Fix it in this window and press Submit.");
         return waitForConfirmation(HUMAN_TIMEOUT);
     }
 
@@ -345,7 +318,7 @@ final class GreenhouseFormFiller {
                 return Optional.of(SubmissionResult.needsHuman(
                         "Greenhouse emailed a security code. Connect Gmail in Settings to enter it automatically."));
             }
-            ctx.progress().accept("Enter the security code from your email in the browser, then submit.");
+            waitingFor("enter the security code from your email in this window, then press Submit.");
             return Optional.of(waitForConfirmation(HUMAN_TIMEOUT));
         }
         enterCode(code.get());
@@ -400,6 +373,7 @@ final class GreenhouseFormFiller {
             while (Instant.now().isBefore(deadline)) {
                 if (page.isClosed()) return SubmissionResult.failed("The browser was closed before submitting.");
                 if (isConfirmed()) return SubmissionResult.submitted("Application submitted (finished in the browser).");
+                PageBanner.show(page, bannerText);
                 page.waitForTimeout(1_000);
             }
         } catch (PlaywrightException e) {
@@ -411,13 +385,21 @@ final class GreenhouseFormFiller {
     private void waitForClose(Duration timeout) {
         Instant deadline = Instant.now().plus(timeout);
         try {
-            while (!page.isClosed() && Instant.now().isBefore(deadline)) page.waitForTimeout(500);
+            while (!page.isClosed() && Instant.now().isBefore(deadline)) {
+                PageBanner.show(page, bannerText);
+                page.waitForTimeout(500);
+            }
         } catch (PlaywrightException ignored) {
             // window closed
         }
     }
 
     // ---- helpers -------------------------------------------------------------------------
+
+    private void waitingFor(String message) {
+        bannerText = message;
+        ctx.progress().accept("In the browser window: " + message);
+    }
 
     private Locator byId(String id) {
         return page.locator("[id='" + id.replace("'", "\\'") + "']").first();

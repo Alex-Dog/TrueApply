@@ -29,6 +29,8 @@ public class SettingsView implements View {
     private final TextField adzunaId = new TextField();
     private final PasswordField adzunaKey = new PasswordField();
     private final TextArea boards = Ui.textArea("", 6);
+    private final TextArea workdaySites = Ui.textArea("", 6);
+    private final ToggleSwitch createWorkdayAccounts = new ToggleSwitch("Create Workday accounts for me");
     private final ToggleSwitch dryRun = new ToggleSwitch("Dry run — fill forms but never press Submit");
     private final ToggleSwitch showBrowser = new ToggleSwitch("Show the browser while applying");
     private final ToggleSwitch optionalCreative = new ToggleSwitch("Also hold applications for optional creative questions");
@@ -60,15 +62,22 @@ public class SettingsView implements View {
         Button forget = Ui.button("Forget", Feather.TRASH_2, Styles.FLAT, Styles.SMALL);
         forget.setOnAction(e -> {
             ctx.settings.clearLearnedGreenhouseBoards();
+            ctx.settings.clearLearnedWorkdaySites();
             learned.setText(learnedText());
         });
-        Ui.addRow(discovery, "Learned boards", Ui.row(learned, forget));
+        Ui.addRow(discovery, "Learned sites", Ui.row(learned, forget));
         Ui.addRow(discovery, "Adzuna App ID", adzunaId);
         Ui.addRow(discovery, "Adzuna App key", adzunaKey);
         Ui.addRow(discovery, "Greenhouse boards", boards);
         Button resetBoards = Ui.button("Reset to defaults", Feather.REFRESH_CW, Styles.FLAT, Styles.SMALL);
         resetBoards.setOnAction(e -> boards.setText(String.join("\n", AppSettings.DEFAULT_GREENHOUSE_BOARDS)));
         Ui.addRow(discovery, "", resetBoards);
+        workdaySites.setPromptText("One per line: tenant.wdN/Site|Company, from a careers URL like "
+                + "https://nvidia.wd5.myworkdayjobs.com/NVIDIAExternalCareerSite");
+        Ui.addRow(discovery, "Workday sites", workdaySites);
+        Button resetWorkday = Ui.button("Reset to defaults", Feather.REFRESH_CW, Styles.FLAT, Styles.SMALL);
+        resetWorkday.setOnAction(e -> workdaySites.setText(String.join("\n", AppSettings.DEFAULT_WORKDAY_SITES)));
+        Ui.addRow(discovery, "", resetWorkday);
 
         GridPane applying = Ui.form();
         Ui.addRow(applying, "Safety", dryRun);
@@ -77,6 +86,11 @@ public class SettingsView implements View {
         Ui.addRow(applying, "Creative questions", optionalCreative);
         Ui.addRow(applying, "", Ui.muted("Required creative questions always wait for you. Optional ones are left "
                 + "blank unless this is on."));
+        Ui.addRow(applying, "Workday accounts", createWorkdayAccounts);
+        Ui.addRow(applying, "", Ui.muted("Workday needs a separate account at every company. When on, TrueApply "
+                + "creates one with your email and a random password (saved on the Accounts page), which ticks that "
+                + "company's “I agree” box for its candidate-account terms on your behalf. When off, the browser "
+                + "opens so you can sign in or create the account yourself."));
 
         GridPane appearance = Ui.form();
         Ui.addRow(appearance, "Theme", dark);
@@ -102,14 +116,16 @@ public class SettingsView implements View {
             case "simplify" -> "community internship & new-grad lists (no key needed)";
             case "greenhouse" -> "every job on the company boards below, plus boards found by other sources";
             case "adzuna" -> "large job aggregator (needs a free API key)";
+            case "workday" -> "searches the Workday career sites below, plus sites found by other sources";
             default -> "";
         };
     }
 
     private String learnedText() {
-        int n = ctx.settings.learnedGreenhouseBoards().size();
-        return n == 0 ? "None yet. Boards found by other sources are added here automatically."
-                : n + " Greenhouse boards found automatically and scanned on every search.";
+        int gh = ctx.settings.learnedGreenhouseBoards().size();
+        int wd = ctx.settings.learnedWorkdaySites().size();
+        return gh + wd == 0 ? "None yet. Company sites found by other sources are added here automatically."
+                : gh + " Greenhouse boards and " + wd + " Workday sites found automatically and searched every time.";
     }
 
     private void save() {
@@ -118,6 +134,8 @@ public class SettingsView implements View {
         ctx.settings.setAdzunaAppId(adzunaId.getText().trim());
         ctx.settings.setAdzunaAppKey(adzunaKey.getText().trim());
         ctx.settings.setGreenhouseBoards(Text.splitList(boards.getText().toLowerCase()));
+        ctx.settings.setWorkdaySites(workdaySites.getText().lines().map(String::trim).filter(l -> !l.isEmpty()).toList());
+        ctx.settings.setCreateWorkdayAccounts(createWorkdayAccounts.isSelected());
         ctx.settings.setDryRun(dryRun.isSelected());
         ctx.settings.setShowBrowser(showBrowser.isSelected());
         ctx.settings.setIncludeOptionalCreative(optionalCreative.isSelected());
@@ -141,6 +159,8 @@ public class SettingsView implements View {
         adzunaId.setText(s.adzunaAppId());
         adzunaKey.setText(s.adzunaAppKey());
         boards.setText(String.join("\n", s.greenhouseBoards()));
+        workdaySites.setText(String.join("\n", s.workdaySiteLines()));
+        createWorkdayAccounts.setSelected(s.createWorkdayAccounts());
         dryRun.setSelected(s.dryRun());
         showBrowser.setSelected(s.showBrowser());
         optionalCreative.setSelected(s.includeOptionalCreative());

@@ -33,6 +33,22 @@ public final class VerificationCodes {
         return Optional.empty();
     }
 
+    private static final Pattern URL = Pattern.compile("https?://[^\\s\"'<>)]+");
+    private static final Pattern VERIFY_WORDS = Pattern.compile("(?i)verif|activat|confirm|validat");
+
+    /** First link to {@code host} that looks like an account verification/activation link. */
+    public static Optional<String> extractLink(String text, String host) {
+        if (text == null || host == null) return Optional.empty();
+        Matcher m = URL.matcher(text);
+        while (m.find()) {
+            String url = m.group().replace("&amp;", "&");
+            if (url.toLowerCase().contains(host.toLowerCase()) && VERIFY_WORDS.matcher(url).find()) {
+                return Optional.of(url);
+            }
+        }
+        return Optional.empty();
+    }
+
     /** Codes contain at least one digit; that rules out words like "below" or "expires". */
     static boolean looksLikeCode(String token) {
         return token.chars().anyMatch(Character::isDigit);

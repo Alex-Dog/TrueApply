@@ -16,6 +16,8 @@ public class FormField {
     public List<String> options = new ArrayList<>();
     /** Section heading, e.g. "Application" or "Voluntary Self-Identification". */
     public String group = "Application";
+    /** Platform-specific widget hint (Workday: "dropdown", "prompt", "date"...); null when obvious. */
+    public String control;
 
     public FieldCategory category = FieldCategory.FACTUAL;
     /** Text answer, chosen option for single selects, or a file path for file fields. */

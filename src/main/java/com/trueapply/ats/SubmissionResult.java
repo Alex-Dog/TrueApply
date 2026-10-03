@@ -8,6 +8,8 @@ public record SubmissionResult(Outcome outcome, String message) {
         DRY_RUN,
         /** Blocked on something only a human can do (captcha, odd field); retry with a visible browser. */
         NEEDS_HUMAN,
+        /** Reached questions only the user should answer; they are in the application's fields. */
+        NEEDS_INPUT,
         FAILED
     }
 
@@ -21,6 +23,10 @@ public record SubmissionResult(Outcome outcome, String message) {
 
     public static SubmissionResult needsHuman(String message) {
         return new SubmissionResult(Outcome.NEEDS_HUMAN, message);
+    }
+
+    public static SubmissionResult needsInput(String message) {
+        return new SubmissionResult(Outcome.NEEDS_INPUT, message);
     }
 
     public static SubmissionResult failed(String message) {

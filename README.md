@@ -82,11 +82,33 @@ accepted by every SDK's structured-output mode.
 | SimplifyJobs | none | Community internship and new-grad lists on GitHub, with direct ATS links |
 | Greenhouse boards | none | Every job at the companies in Settings, plus boards **learned** automatically when another source links to one |
 | Adzuna | free API key | General aggregator; redirects are followed to find Greenhouse forms |
+| Workday sites | none | Workday's public career-site search API for the sites in Settings, plus sites **learned** from the other sources |
 
 Lever and Ashby postings are tagged "coming soon" and hidden behind Discover's manual-only
 toggle. To add a source, implement `JobSource` and add it to the list in `AppContext`; it
 gets an on/off switch in Settings automatically. Remotive, Himalayas and The Muse were
 considered but dropped, because their postings hide the employer's real application link.
+
+### Workday
+
+Workday only shows its questions inside a signed-in, multi-page wizard. `WorkdayPlatform` therefore
+reports `questionsUpfront() == false`, and `WorkdayWalker` does everything in the browser:
+
+1. Opens the posting and clicks **Apply → Apply Manually**.
+2. Signs in with a saved login from the Accounts vault, or, only if **Settings → Workday accounts** is on,
+   creates an account. That means a random password, saved before submitting, and ticking the company's
+   "I agree" box for its account terms. A verification link is picked up from Gmail when connected.
+   Otherwise the visible browser is handed to you.
+3. On each page it reads every visible `formField-*` container, has the AI answer new questions, fills
+   them, and clicks **Save and Continue**.
+4. When a page has creative or unknown required questions, it stops with `NEEDS_INPUT`. The app goes
+   to the Inbox, and after you answer, the walk resumes from Workday's saved draft. More questions can
+   show up on later pages.
+5. At **Review**, dry run stops (the draft stays in your Workday account). Otherwise it clicks Submit.
+
+Verified live: discovery, descriptions, and the path up to sign-in. The signed-in pages are written to
+Workday's standard `data-automation-id` structure but haven't been run against a real account yet. Dry-run
+one application with a visible browser first.
 
 ### Adding Lever / Ashby
 

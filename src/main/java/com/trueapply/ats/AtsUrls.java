@@ -1,6 +1,7 @@
 package com.trueapply.ats;
 
 import com.trueapply.ats.greenhouse.GreenhouseUrls;
+import com.trueapply.ats.workday.WorkdayUrls;
 import com.trueapply.model.AtsType;
 import com.trueapply.model.Job;
 
@@ -33,6 +34,8 @@ public final class AtsUrls {
         if (m.find()) return Optional.of(new AtsRef(AtsType.LEVER, m.group(1), m.group(2)));
         m = ASHBY.matcher(url);
         if (m.find()) return Optional.of(new AtsRef(AtsType.ASHBY, m.group(1), m.group(2)));
+        Optional<WorkdayUrls.JobRef> wd = WorkdayUrls.job(url);
+        if (wd.isPresent()) return Optional.of(new AtsRef(AtsType.WORKDAY, wd.get().site().board(), wd.get().reqId()));
         return Optional.empty();
     }
 

@@ -177,8 +177,10 @@ public class InboxView implements View {
         return switch (app.status) {
             case NEEDS_INPUT -> {
                 long pending = app.pendingHumanFields(ctx.settings.includeOptionalCreative());
-                Message m = new Message(pending + " question" + (pending == 1 ? "" : "s") + " for you",
-                        "Everything else has been filled from your profile. Answer these in your own words, then submit.",
+                String detail = Text.isBlank(app.statusMessage)
+                        ? "Everything else has been filled from your profile. Answer these in your own words, then submit."
+                        : app.statusMessage; // e.g. Workday: more questions may follow on later pages
+                Message m = new Message(pending + " question" + (pending == 1 ? "" : "s") + " for you", detail,
                         Ui.icon(Feather.EDIT_3));
                 m.getStyleClass().add(Styles.WARNING);
                 yield m;

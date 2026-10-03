@@ -80,16 +80,25 @@ public class DiscoveryService {
         return new Result(matched, added, perSource, learned, warnings);
     }
 
+    /** Remembers Greenhouse boards and Workday sites linked from this batch; returns how many are new. */
     private int learnBoards(List<Job> found) {
         Set<String> known = settings.learnedGreenhouseBoards();
         known.addAll(settings.greenhouseBoards());
         Set<String> fresh = new TreeSet<>();
+        Set<String> knownWorkday = new java.util.HashSet<>();
+        settings.workdaySites().keySet().forEach(k -> knownWorkday.add(k.toLowerCase()));
+        settings.learnedWorkdaySites().keySet().forEach(k -> knownWorkday.add(k.toLowerCase()));
+        Map<String, String> freshWorkday = new java.util.TreeMap<>();
         for (Job job : found) {
-            if (job.ats == AtsType.GREENHOUSE && job.atsBoard != null && !known.contains(job.atsBoard.toLowerCase())) {
+            if (job.atsBoard == null || "workday".equals(job.source) || "greenhouse".equals(job.source)) continue;
+            if (job.ats == AtsType.GREENHOUSE && !known.contains(job.atsBoard.toLowerCase())) {
                 fresh.add(job.atsBoard.toLowerCase());
+            } else if (job.ats == AtsType.WORKDAY && !knownWorkday.contains(job.atsBoard.toLowerCase())) {
+                freshWorkday.putIfAbsent(job.atsBoard, job.company == null ? "" : job.company);
             }
         }
         if (!fresh.isEmpty()) settings.addLearnedGreenhouseBoards(fresh);
-        return fresh.size();
+        if (!freshWorkday.isEmpty()) settings.addLearnedWorkdaySites(freshWorkday);
+        return fresh.size() + freshWorkday.size();
     }
 }

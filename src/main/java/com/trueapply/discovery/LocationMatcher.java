@@ -21,6 +21,7 @@ public final class LocationMatcher {
     private static final Pattern REMOTE_WORDS = Pattern.compile(
             "\\b(remote|remotely|anywhere|first|friendly|hybrid|based|in|only|within|from|location|flexible|of|the)\\b");
     private static final Set<String> GLOBAL = Set.of("worldwide", "global", "anywhere", "international");
+    private static final Pattern MULTIPLE = Pattern.compile("(?i)\\d+\\s+locations");
 
     /** Canonical country → names and abbreviations that refer to it (normalized, dots removed). */
     private static final Map<String, List<String>> COUNTRIES = new LinkedHashMap<>();
@@ -103,6 +104,8 @@ public final class LocationMatcher {
                 .or(() -> countryOf(homeCountry))
                 .orElse(null);
 
+        // Workday collapses multi-location postings to "3 Locations"; we can't judge those, so keep them.
+        if (MULTIPLE.matcher(Text.orEmpty(jobLocation).trim()).matches()) return true;
         for (String segment : SEGMENT_SPLIT.split(Text.orEmpty(jobLocation))) {
             if (segment.isBlank()) continue;
             String normalized = Text.normalize(segment);

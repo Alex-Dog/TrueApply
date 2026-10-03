@@ -38,6 +38,20 @@ public final class Http {
         return Json.MAPPER.readTree(response.body());
     }
 
+    public static JsonNode postJson(String url, String jsonBody) throws IOException {
+        HttpResponse<String> response = send(HttpRequest.newBuilder(URI.create(url))
+                .header("Accept", "application/json")
+                .header("Content-Type", "application/json")
+                .header("User-Agent", USER_AGENT)
+                .timeout(Duration.ofSeconds(30))
+                .POST(HttpRequest.BodyPublishers.ofString(jsonBody))
+                .build());
+        if (response.statusCode() / 100 != 2) {
+            throw new IOException("POST " + url + " returned HTTP " + response.statusCode());
+        }
+        return Json.MAPPER.readTree(response.body());
+    }
+
     public static HttpResponse<String> send(HttpRequest request) throws IOException {
         try {
             return CLIENT.send(request, HttpResponse.BodyHandlers.ofString());

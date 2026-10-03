@@ -31,6 +31,7 @@ import java.util.Base64;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Optional;
+import java.util.function.Function;
 import java.util.stream.Stream;
 
 /**
@@ -79,6 +80,22 @@ public class GmailService implements VerificationCodeSource {
 
     @Override
     public Optional<String> waitForCode(Instant since, Duration timeout) {
+        return poll(since, timeout, "(subject:code OR subject:verification OR subject:verify OR subject:security)",
+                message -> {
+                    Optional<String> code = VerificationCodes.extract(bodyText(message.getPayload(), true));
+                    return code.isPresent() ? code : VerificationCodes.extract(message.getSnippet());
+                });
+    }
+
+    @Override
+    public Optional<String> waitForLink(Instant since, String host, Duration timeout) {
+        // Links live in the HTML (href), so read bodies without stripping tags.
+        return poll(since, timeout, "(verify OR verification OR activate OR confirm)",
+                message -> VerificationCodes.extractLink(bodyText(message.getPayload(), false), host));
+    }
+
+    /** Checks recent matching mail every few seconds until {@code extractor} finds something. */
+    private Optional<String> poll(Instant since, Duration timeout, String filter, Function<Message, Optional<String>> extractor) {
         if (!isConnected()) return Optional.empty();
         Instant deadline = Instant.now().plus(timeout);
         try {
@@ -87,11 +104,10 @@ public class GmailService implements VerificationCodeSource {
             if (credential == null) return Optional.empty();
             Gmail gmail = client(transport, credential);
             // Gmail's after: filter has 1-second resolution; back off a little for clock skew.
-            String query = "after:" + (since.getEpochSecond() - 60)
-                    + " (subject:code OR subject:verification OR subject:verify OR subject:security)";
+            String query = "after:" + (since.getEpochSecond() - 60) + " " + filter;
             while (Instant.now().isBefore(deadline)) {
-                Optional<String> code = findCode(gmail, query, since);
-                if (code.isPresent()) return code;
+                Optional<String> found = search(gmail, query, since, extractor);
+                if (found.isPresent()) return found;
                 Thread.sleep(5_000);
             }
         } catch (IOException | GeneralSecurityException e) {
@@ -102,7 +118,8 @@ public class GmailService implements VerificationCodeSource {
         return Optional.empty();
     }
 
-    private static Optional<String> findCode(Gmail gmail, String query, Instant since) throws IOException {
+    private static Optional<String> search(Gmail gmail, String query, Instant since,
+                                           Function<Message, Optional<String>> extractor) throws IOException {
         List<Message> refs = gmail.users().messages().list("me").setQ(query).setMaxResults(5L).execute().getMessages();
         if (refs == null) return Optional.empty();
         List<Message> messages = new java.util.ArrayList<>();
@@ -110,23 +127,22 @@ public class GmailService implements VerificationCodeSource {
         messages.sort(Comparator.comparing(Message::getInternalDate).reversed());
         for (Message message : messages) {
             if (message.getInternalDate() != null && message.getInternalDate() < since.toEpochMilli() - 60_000) continue;
-            Optional<String> code = VerificationCodes.extract(bodyText(message.getPayload()));
-            if (code.isEmpty()) code = VerificationCodes.extract(message.getSnippet());
-            if (code.isPresent()) return code;
+            Optional<String> found = extractor.apply(message);
+            if (found.isPresent()) return found;
         }
         return Optional.empty();
     }
 
-    private static String bodyText(MessagePart part) {
+    private static String bodyText(MessagePart part, boolean stripHtml) {
         if (part == null) return "";
         StringBuilder sb = new StringBuilder();
         String mime = Text.orEmpty(part.getMimeType());
         if (part.getBody() != null && part.getBody().getData() != null
                 && (mime.startsWith("text/plain") || mime.startsWith("text/html"))) {
             String decoded = new String(Base64.getUrlDecoder().decode(part.getBody().getData()), StandardCharsets.UTF_8);
-            sb.append(mime.startsWith("text/html") ? Text.stripHtml(decoded) : decoded).append('\n');
+            sb.append(stripHtml && mime.startsWith("text/html") ? Text.stripHtml(decoded) : decoded).append('\n');
         }
-        if (part.getParts() != null) for (MessagePart child : part.getParts()) sb.append(bodyText(child));
+        if (part.getParts() != null) for (MessagePart child : part.getParts()) sb.append(bodyText(child, stripHtml));
         return sb.toString();
     }
 

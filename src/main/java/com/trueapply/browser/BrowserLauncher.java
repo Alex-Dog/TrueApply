@@ -8,6 +8,7 @@ import com.trueapply.settings.AppSettings;
 import com.trueapply.util.AppPaths;
 
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -47,7 +48,9 @@ public class BrowserLauncher {
         Path profile = AppPaths.browserProfile().resolve(channel == null ? "chromium" : channel);
         BrowserType.LaunchPersistentContextOptions options = new BrowserType.LaunchPersistentContextOptions()
                 .setHeadless(!visible)
-                .setViewportSize(1280, 900);
+                .setViewportSize(1280, 900)
+                // Playwright adds --no-sandbox, which makes Edge/Chrome show a scary warning bar.
+                .setIgnoreDefaultArgs(List.of("--no-sandbox"));
         if (channel != null) options.setChannel(channel);
         return playwright.chromium().launchPersistentContext(profile, options);
     }
