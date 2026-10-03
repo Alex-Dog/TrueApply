@@ -13,7 +13,6 @@ import javafx.scene.control.Control;
 import javafx.scene.control.Label;
 import javafx.scene.control.TextArea;
 import javafx.scene.control.TextField;
-import javafx.scene.layout.FlowPane;
 import javafx.scene.layout.VBox;
 import javafx.stage.FileChooser;
 import org.kordamp.ikonli.feather.Feather;
@@ -62,7 +61,7 @@ public class FieldEditor {
                 }
             }
             case MULTI_SELECT -> {
-                FlowPane pane = new FlowPane(12, 8);
+                VBox pane = new VBox(8); // one option per line; long compliance options read badly side by side
                 List<CheckBox> boxes = new ArrayList<>();
                 for (String option : field.options) {
                     CheckBox box = new CheckBox(option);

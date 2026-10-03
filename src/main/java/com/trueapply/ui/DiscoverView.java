@@ -32,6 +32,7 @@ public class DiscoverView implements View {
     private final FilteredList<Job> jobs = new FilteredList<>(FXCollections.observableArrayList());
     private final TableView<Job> table = new TableView<>(jobs);
     private final Label status = Ui.muted("");
+    private final Label hiddenNote = Ui.muted("");
     private final ProgressIndicator spinner = new ProgressIndicator();
     private final Button find = Ui.button("Find jobs", Feather.SEARCH, Styles.ACCENT);
     private final VBox root;
@@ -64,7 +65,7 @@ public class DiscoverView implements View {
                 "Matches for your job preferences from Greenhouse boards and Adzuna. Select jobs (Ctrl/Shift-click) and apply.",
                 Ui.row(find, spinner, status, Ui.hgrow(), filter),
                 table,
-                Ui.row(apply, dismiss, Ui.hgrow(),
+                Ui.row(apply, dismiss, hiddenNote, Ui.hgrow(),
                         Ui.muted("Double-click a row to open the posting.")));
     }
 
@@ -121,7 +122,16 @@ public class DiscoverView implements View {
     public void refresh() {
         @SuppressWarnings("unchecked")
         javafx.collections.ObservableList<Job> source = (javafx.collections.ObservableList<Job>) jobs.getSource();
-        source.setAll(ctx.jobs.findByStatus(Job.JobStatus.NEW));
+        // Re-apply preferences so edits on the Profile page take effect without a new search.
+        com.trueapply.model.UserProfile profile = ctx.profiles.load();
+        java.util.List<Job> all = ctx.jobs.findByStatus(Job.JobStatus.NEW);
+        java.util.List<Job> matching = all.stream()
+                .filter(j -> com.trueapply.discovery.JobFilter.matches(j, profile.preferences, profile.personal.country))
+                .toList();
+        source.setAll(matching);
+        int hidden = all.size() - matching.size();
+        hiddenNote.setText(hidden == 0 ? "" : hidden + " earlier result" + (hidden == 1 ? "" : "s")
+                + " hidden by your current job preferences.");
     }
 
     private void discover() {

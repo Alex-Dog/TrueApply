@@ -6,6 +6,7 @@ import com.trueapply.model.FieldCategory;
 import com.trueapply.model.FieldType;
 import com.trueapply.model.FormField;
 import com.trueapply.model.UserProfile;
+import com.trueapply.util.DateParts;
 import com.trueapply.util.Text;
 
 import java.util.ArrayList;
@@ -17,6 +18,8 @@ import java.util.List;
  */
 public final class GreenhouseFormParser {
     static final String SELF_ID_GROUP = "Voluntary Self-Identification";
+    static final String EDUCATION_GROUP = "Education";
+    static final String EMPLOYMENT_GROUP = "Employment";
     static final List<String> HISPANIC_OPTIONS = List.of("Yes", "No", "Decline To Self Identify");
 
     private GreenhouseFormParser() {
@@ -39,6 +42,17 @@ public final class GreenhouseFormParser {
                     fields.add(country);
                 }
             }
+        }
+
+        // The API only flags these sections ("education_required" etc.); their inputs follow a
+        // fixed naming scheme on the hosted form. We fill one entry from the most recent item.
+        String employment = job.path("employment").asText("");
+        if (employment.startsWith("employment_")) {
+            addEmployment(fields, profile, employment.equals("employment_required"));
+        }
+        String education = job.path("education").asText("");
+        if (education.startsWith("education_")) {
+            addEducation(fields, profile, education.equals("education_required"));
         }
 
         for (JsonNode q : job.path("location_questions")) {
@@ -85,6 +99,57 @@ public final class GreenhouseFormParser {
 
         prefill(fields, profile);
         return fields;
+    }
+
+    private static void addEducation(List<FormField> fields, UserProfile profile, boolean required) {
+        UserProfile.Education ed = profile.education.isEmpty() ? new UserProfile.Education() : profile.education.getFirst();
+        fields.add(sectionField("school--0", "School", FieldType.SINGLE_SELECT, required, ed.school, EDUCATION_GROUP));
+        fields.add(sectionField("degree--0", "Degree", FieldType.SINGLE_SELECT, required, ed.degree, EDUCATION_GROUP));
+        fields.add(sectionField("discipline--0", "Discipline", FieldType.SINGLE_SELECT, required, ed.fieldOfStudy, EDUCATION_GROUP));
+        fields.add(sectionField("start-year--0", "Education start year", FieldType.TEXT, false,
+                DateParts.parse(ed.startDate).year(), EDUCATION_GROUP));
+        fields.add(sectionField("end-year--0", "Education end year", FieldType.TEXT, false,
+                DateParts.parse(ed.endDate).year(), EDUCATION_GROUP));
+    }
+
+    private static void addEmployment(List<FormField> fields, UserProfile profile, boolean required) {
+        UserProfile.WorkExperience job = profile.experience.isEmpty()
+                ? new UserProfile.WorkExperience() : profile.experience.getFirst();
+        DateParts start = DateParts.parse(job.startDate);
+        DateParts end = DateParts.parse(job.endDate);
+        fields.add(sectionField("company-name-0", "Most recent employer", FieldType.TEXT, required, job.company, EMPLOYMENT_GROUP));
+        fields.add(sectionField("title-0", "Job title", FieldType.TEXT, required, job.title, EMPLOYMENT_GROUP));
+        fields.add(sectionField("start-date-month-0", "Job start month", FieldType.SINGLE_SELECT, required, start.month(), EMPLOYMENT_GROUP));
+        fields.add(sectionField("start-date-year-0", "Job start year", FieldType.TEXT, required, start.year(), EMPLOYMENT_GROUP));
+        boolean known = !Text.isBlank(job.company);
+        FormField current = sectionField("current-role-0", "Current role", FieldType.SINGLE_SELECT, false,
+                known ? (job.current ? "Yes" : "No") : null, EMPLOYMENT_GROUP);
+        current.options = new ArrayList<>(List.of("Yes", "No"));
+        fields.add(current);
+        boolean needEnd = required && !job.current;
+        FormField endMonth = sectionField("end-date-month-0", "Job end month", FieldType.SINGLE_SELECT, needEnd,
+                job.current ? null : end.month(), EMPLOYMENT_GROUP);
+        FormField endYear = sectionField("end-date-year-0", "Job end year", FieldType.TEXT, needEnd,
+                job.current ? null : end.year(), EMPLOYMENT_GROUP);
+        fields.add(endMonth);
+        fields.add(endYear);
+    }
+
+    /** A field answered from the profile when we know the value, else asked or skipped. */
+    private static FormField sectionField(String key, String label, FieldType type, boolean required, String value, String group) {
+        FormField field = new FormField(key, label, type, required);
+        field.group = group;
+        if (!Text.isBlank(value)) {
+            field.answer = value.trim();
+            field.category = FieldCategory.PROFILE;
+            field.source = AnswerSource.PROFILE;
+        } else if (required) {
+            field.category = FieldCategory.MISSING_INFO;
+            field.note = "Add this to the " + group.toLowerCase() + " section of your profile, or answer it here.";
+        } else {
+            field.category = FieldCategory.SKIPPED;
+        }
+        return field;
     }
 
     private static FormField field(String name, JsonNode question, String type, JsonNode f) {

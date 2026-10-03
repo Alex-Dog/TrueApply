@@ -1,6 +1,5 @@
 package com.trueapply.ui;
 
-import atlantafx.base.controls.Card;
 import atlantafx.base.controls.Message;
 import atlantafx.base.theme.Styles;
 import com.trueapply.AppContext;
@@ -12,6 +11,7 @@ import com.trueapply.model.JobOverview;
 import com.trueapply.util.Json;
 import com.trueapply.util.Text;
 import javafx.geometry.Insets;
+import javafx.geometry.Pos;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
@@ -22,7 +22,10 @@ import javafx.scene.control.ScrollPane;
 import javafx.scene.control.SplitPane;
 import javafx.scene.control.Tab;
 import javafx.scene.control.TabPane;
-import javafx.scene.control.TitledPane;
+import javafx.scene.layout.BorderPane;
+import javafx.scene.layout.HBox;
+import javafx.scene.layout.Priority;
+import javafx.scene.layout.Region;
 import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.kordamp.ikonli.feather.Feather;
@@ -110,22 +113,55 @@ public class InboxView implements View {
         editors.clear();
         rememberBoxes.clear();
 
-        VBox content = new VBox(16);
-        content.setPadding(new Insets(24, 28, 24, 20));
-        content.getChildren().add(header(app));
+        // Fixed header, one scroll area per tab, and a pinned action bar. Putting the TabPane
+        // inside a ScrollPane made JavaFX under-measure wrapped text and clip the bottom.
+        VBox top = new VBox(14, header(app));
         Node banner = statusBanner(app);
-        if (banner != null) content.getChildren().add(banner);
+        if (banner != null) top.getChildren().add(banner);
+        top.setPadding(new Insets(20, 28, 8, 20));
 
         TabPane tabs = new TabPane();
         tabs.setTabClosingPolicy(TabPane.TabClosingPolicy.UNAVAILABLE);
-        tabs.getTabs().add(new Tab("Questions", questions(app)));
-        tabs.getTabs().add(new Tab("Role overview", roleOverview(app)));
-        tabs.getTabs().add(new Tab("Company", company(app)));
-        content.getChildren().add(tabs);
+        tabs.getTabs().add(new Tab("Questions", scrolling(questions(app))));
+        tabs.getTabs().add(new Tab("Role overview", scrolling(roleOverview(app))));
+        tabs.getTabs().add(new Tab("Company", scrolling(company(app))));
 
+        BorderPane layout = new BorderPane(tabs);
+        layout.setTop(top);
+        BorderPane.setMargin(tabs, new Insets(0, 8, 0, 8));
+        if (isEditable(app) && !app.fields.isEmpty()) layout.setBottom(actionBar(app));
+        detail.getChildren().setAll(layout);
+    }
+
+    private static ScrollPane scrolling(Node content) {
+        ((javafx.scene.layout.Region) content).setPadding(new Insets(16, 20, 24, 12));
         ScrollPane scroll = new ScrollPane(content);
         scroll.setFitToWidth(true);
-        detail.getChildren().setAll(scroll);
+        scroll.setHbarPolicy(ScrollPane.ScrollBarPolicy.NEVER);
+        return scroll;
+    }
+
+    private static boolean isEditable(JobApplication app) {
+        return app.status == ApplicationStatus.NEEDS_INPUT || app.status == ApplicationStatus.FAILED;
+    }
+
+    private Node actionBar(JobApplication app) {
+        Button save = Ui.button("Save draft", Feather.SAVE);
+        save.setOnAction(e -> saveDraft(app));
+        Button submit = Ui.button("Submit application", Feather.SEND, Styles.ACCENT);
+        submit.setDefaultButton(true);
+        submit.setOnAction(e -> submit(app));
+        Button discard = Ui.button("Discard", Feather.TRASH_2, Styles.FLAT, Styles.DANGER);
+        discard.setOnAction(e -> discard(app));
+        for (Button b : List.of(submit, save, discard)) b.setMinWidth(Region.USE_PREF_SIZE);
+        HBox bar = Ui.row(submit, save, Ui.hgrow(), discard);
+        if (ctx.settings.dryRun()) {
+            Label note = Ui.muted("Dry run is on: the form will be filled but not submitted.");
+            HBox.setHgrow(note, Priority.ALWAYS);
+            bar.getChildren().set(2, note); // replaces the spacer
+        }
+        bar.getStyleClass().add("action-bar");
+        return bar;
     }
 
     private Node header(JobApplication app) {
@@ -167,12 +203,11 @@ public class InboxView implements View {
 
     private Node questions(JobApplication app) {
         VBox box = new VBox(14);
-        box.setPadding(new Insets(16, 0, 0, 0));
         if (app.fields.isEmpty()) {
             box.getChildren().add(Ui.muted("Questions will appear here once the form has been read."));
             return box;
         }
-        boolean editable = app.status == ApplicationStatus.NEEDS_INPUT || app.status == ApplicationStatus.FAILED;
+        boolean editable = isEditable(app);
 
         List<FormField> human = app.fields.stream().filter(FormField::needsHuman).toList();
         List<FormField> automatic = app.fields.stream()
@@ -189,34 +224,37 @@ public class InboxView implements View {
             editors.put(field, editor);
             Label label = Ui.bold(field.label + (field.required ? " *" : ""));
             Label source = Ui.chip(field.source.displayName(), "neutral");
-            autoBox.getChildren().add(new VBox(4, Ui.row(label, Ui.hgrow(), Ui.categoryChip(field.category), source), editor.node()));
+            HBox.setHgrow(label, Priority.ALWAYS);
+            HBox header = Ui.row(label, Ui.categoryChip(field.category), source);
+            header.setAlignment(Pos.TOP_LEFT);
+            autoBox.getChildren().add(new VBox(4, header, editor.node()));
         }
-        TitledPane auto = new TitledPane("Filled automatically (" + automatic.size() + ") — review or change", autoBox);
-        auto.setExpanded(human.isEmpty());
-        box.getChildren().add(auto);
-
-        if (editable) {
-            Button save = Ui.button("Save draft", Feather.SAVE);
-            save.setOnAction(e -> saveDraft(app));
-            Button submit = Ui.button("Submit application", Feather.SEND, Styles.ACCENT);
-            submit.setDefaultButton(true);
-            submit.setOnAction(e -> submit(app));
-            Button discard = Ui.button("Discard", Feather.TRASH_2, Styles.FLAT, Styles.DANGER);
-            discard.setOnAction(e -> discard(app));
-            String mode = ctx.settings.dryRun() ? "Dry run is on: the form will be filled but not submitted." : null;
-            box.getChildren().add(Ui.row(submit, save, Ui.hgrow(), discard));
-            if (mode != null) box.getChildren().add(Ui.muted(mode));
-        }
+        // Hand-rolled collapsible: TitledPane has the same wrapped-text sizing bug.
+        autoBox.getStyleClass().add("question-card");
+        boolean expanded = human.isEmpty();
+        autoBox.setVisible(expanded);
+        autoBox.setManaged(expanded);
+        Button toggle = Ui.button("Filled automatically (" + automatic.size() + ") — review or change",
+                expanded ? Feather.CHEVRON_DOWN : Feather.CHEVRON_RIGHT, Styles.FLAT);
+        toggle.setOnAction(e -> {
+            boolean show = !autoBox.isVisible();
+            autoBox.setVisible(show);
+            autoBox.setManaged(show);
+            toggle.setGraphic(Ui.icon(show ? Feather.CHEVRON_DOWN : Feather.CHEVRON_RIGHT));
+        });
+        box.getChildren().addAll(toggle, autoBox);
         return box;
     }
 
     private Node humanCard(FormField field, boolean editable) {
         FieldEditor editor = new FieldEditor(field, editable);
         editors.put(field, editor);
-        Card card = new Card();
         Label label = Ui.bold(field.label);
-        card.setHeader(Ui.row(label, Ui.hgrow(), Ui.categoryChip(field.category),
-                Ui.chip(field.required ? "Required" : "Optional", field.required ? "danger" : "neutral")));
+        label.getStyleClass().add(Styles.TITLE_4);
+        // Tags on their own line so long questions get the full width to wrap.
+        VBox card = new VBox(10, Ui.row(Ui.categoryChip(field.category),
+                Ui.chip(field.required ? "Required" : "Optional", field.required ? "danger" : "neutral")), label);
+        card.getStyleClass().add("question-card");
         VBox body = new VBox(8);
         if (!Text.isBlank(field.description)) body.getChildren().add(Ui.muted(Text.stripHtml(field.description)));
         if (field.category == FieldCategory.MISSING_INFO && !Text.isBlank(field.note)) {
@@ -229,13 +267,12 @@ public class InboxView implements View {
             rememberBoxes.put(field, remember);
             body.getChildren().add(remember);
         }
-        card.setBody(body);
+        card.getChildren().add(body);
         return card;
     }
 
     private Node roleOverview(JobApplication app) {
         VBox box = new VBox(10);
-        box.setPadding(new Insets(16, 0, 0, 0));
         JobOverview overview = overview(app);
         if (overview != null) {
             box.getChildren().add(Ui.bold(Text.orEmpty(overview.roleSummary())));
@@ -250,7 +287,6 @@ public class InboxView implements View {
 
     private Node company(JobApplication app) {
         VBox box = new VBox(10);
-        box.setPadding(new Insets(16, 0, 0, 0));
         JobOverview overview = overview(app);
         if (overview != null && !Text.isBlank(overview.companySummary())) box.getChildren().add(Ui.bold(overview.companySummary()));
         if (!Text.isBlank(app.companyDescriptionHtml)) {

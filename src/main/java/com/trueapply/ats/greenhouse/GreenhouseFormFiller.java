@@ -37,6 +37,10 @@ final class GreenhouseFormFiller {
     private static final Pattern SUBMIT = Pattern.compile("submit", Pattern.CASE_INSENSITIVE);
     private static final Duration HUMAN_TIMEOUT = Duration.ofMinutes(10);
     private static final Duration CONFIRM_TIMEOUT = Duration.ofSeconds(45);
+    /** Education/employment inputs; which of them exist varies by company, so absent ones are skipped. */
+    private static final Pattern SECTION_FIELD = Pattern.compile(
+            "^(school|degree|discipline|start-year|end-year)--\\d+$"
+                    + "|^(company-name|title|start-date-month|start-date-year|end-date-month|end-date-year|current-role)-\\d+$");
 
     private final Page page;
     private final JobApplication app;
@@ -98,10 +102,14 @@ final class GreenhouseFormFiller {
     // ---- filling -------------------------------------------------------------------------
 
     private void fill(FormField field) throws FillException {
+        if (SECTION_FIELD.matcher(field.key).matches()) {
+            fillSectionField(field);
+            return;
+        }
         switch (field.key) {
             case "resume" -> setFile("resume", Path.of(field.answer));
             case "cover_letter_text" -> fillCoverLetter(field.answer);
-            case "country" -> chooseOption("country", field.answer);
+            case "country" -> chooseOption("country", List.of(field.answer), List.of());
             case "location" -> fillLocation("candidate-location", field.answer);
             default -> {
                 switch (field.type) {
@@ -112,6 +120,34 @@ final class GreenhouseFormFiller {
                     case FILE -> setFile(field.key, Path.of(field.answer));
                 }
             }
+        }
+    }
+
+    private void fillSectionField(FormField field) throws FillException {
+        String key = field.key;
+        if (key.startsWith("current-role-")) {
+            Locator box = page.locator("input[type='checkbox'][id^='" + key + "']").first();
+            if (box.count() == 0) return;
+            if ("Yes".equals(field.answer)) box.check();
+            else box.uncheck();
+            return;
+        }
+        Locator el = byId(key);
+        waitAttached(el, 2_000);
+        if (el.count() == 0 || !el.isVisible()) return; // this company's form doesn't ask it
+        if (!"combobox".equals(el.getAttribute("role"))) {
+            el.fill(field.answer);
+            return;
+        }
+        if (key.startsWith("degree--")) {
+            List<String> terms = OptionHints.degreeTerms(field.answer);
+            chooseOption(key, terms.subList(0, terms.size() - 1), List.of("Other"));
+        } else if (key.startsWith("school--")) {
+            chooseOption(key, List.of(field.answer), List.of("Other", "0 - Other"));
+        } else if (key.startsWith("discipline--")) {
+            chooseOption(key, List.of(field.answer), List.of("Other", "Discipline Unknown"));
+        } else {
+            chooseOption(key, List.of(field.answer), List.of());
         }
     }
 
@@ -159,7 +195,7 @@ final class GreenhouseFormFiller {
                 return;
             }
             if ("combobox".equals(el.getAttribute("role"))) {
-                for (String v : values) chooseOption(field.key, v);
+                for (String v : values) chooseOption(field.key, List.of(v), List.of());
                 return;
             }
         }
@@ -172,24 +208,49 @@ final class GreenhouseFormFiller {
         }
     }
 
-    /** Picks an option from a react-select combobox. */
-    private void chooseOption(String id, String value) throws FillException {
+    /**
+     * Picks an option from a react-select combobox. Tries the wanted values against the open list,
+     * then by typing them (long lists like schools only load matches as you type), and only then
+     * the fallbacks (e.g. "Other").
+     */
+    private void chooseOption(String id, List<String> wanted, List<String> fallbacks) throws FillException {
         Locator input = require(byId(id));
         input.scrollIntoViewIfNeeded();
         input.click();
         Locator options = optionsFor(id);
         waitVisible(options.first(), 3_000);
-        int index = bestMatch(options.allInnerTexts(), value);
-        if (index < 0) {
-            input.fill(value);
-            page.waitForTimeout(800);
-            index = bestMatch(options.allInnerTexts(), value);
+        for (List<String> candidates : List.of(wanted, fallbacks)) {
+            List<String> shown = options.allInnerTexts();
+            for (String candidate : candidates) {
+                int index = bestMatch(shown, candidate);
+                if (index >= 0) {
+                    options.nth(index).click();
+                    return;
+                }
+            }
+            for (String candidate : candidates) {
+                input.fill("");
+                input.pressSequentially(candidate, new Locator.PressSequentiallyOptions().setDelay(25));
+                int index = waitForMatch(options, candidate, 4_000);
+                if (index >= 0) {
+                    options.nth(index).click();
+                    return;
+                }
+            }
         }
-        if (index < 0) {
-            page.keyboard().press("Escape");
-            throw new FillException("no option matching “" + value + "”");
+        input.fill("");
+        page.keyboard().press("Escape");
+        throw new FillException("no option matching “" + (wanted.isEmpty() ? "" : wanted.getFirst()) + "”");
+    }
+
+    private int waitForMatch(Locator options, String candidate, long timeoutMs) {
+        long deadline = System.currentTimeMillis() + timeoutMs;
+        while (System.currentTimeMillis() < deadline) {
+            int index = bestMatch(options.allInnerTexts(), candidate);
+            if (index >= 0) return index;
+            page.waitForTimeout(250);
         }
-        options.nth(index).click();
+        return -1;
     }
 
     /** Location fields search asynchronously as you type; take the first suggestion. */
@@ -210,13 +271,30 @@ final class GreenhouseFormFiller {
     }
 
     static int bestMatch(List<String> optionTexts, String value) {
-        String wanted = Text.normalize(value);
+        String wanted = matchKey(value);
         if (wanted.isEmpty()) return -1;
-        List<String> normalized = optionTexts.stream().map(Text::normalize).toList();
-        for (int i = 0; i < normalized.size(); i++) if (normalized.get(i).equals(wanted)) return i;
+        List<String> keys = optionTexts.stream().map(GreenhouseFormFiller::matchKey).toList();
+        for (int i = 0; i < keys.size(); i++) if (keys.get(i).equals(wanted)) return i;
         // Shortest wins, so "United States" picks "United States +1" over "United States Minor Outlying Islands".
-        int prefix = shortest(normalized, o -> o.startsWith(wanted));
-        return prefix >= 0 ? prefix : shortest(normalized, o -> o.contains(wanted));
+        int prefix = shortest(keys, o -> o.startsWith(wanted));
+        if (prefix >= 0) return prefix;
+        int contains = shortest(keys, o -> o.contains(wanted));
+        if (contains >= 0) return contains;
+        // "Computer Science and Engineering" → "Computer Science": the longest option inside the value.
+        int best = -1;
+        for (int i = 0; i < keys.size(); i++) {
+            String k = keys.get(i);
+            if (k.length() >= 4 && (" " + wanted + " ").contains(" " + k + " ")
+                    && (best < 0 || k.length() > keys.get(best).length())) {
+                best = i;
+            }
+        }
+        return best;
+    }
+
+    /** Normalized with punctuation as spaces, so "UC, Berkeley" ≈ "UC - Berkeley" and "Ph.D." ≈ "Ph D". */
+    private static String matchKey(String s) {
+        return Text.normalize(s).replaceAll("[^a-z0-9+#]+", " ").trim();
     }
 
     private static int shortest(List<String> options, java.util.function.Predicate<String> test) {

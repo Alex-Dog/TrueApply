@@ -108,6 +108,11 @@ public class FormAnswerer {
         field.source = AnswerSource.AI;
         switch (field.type) {
             case SINGLE_SELECT -> {
+                if (field.options.isEmpty()) { // options only known in the browser (e.g. school)
+                    if (Text.isBlank(decision.answer())) markMissing(field, decision.note());
+                    else field.answer = decision.answer().trim();
+                    return;
+                }
                 Optional<String> match = firstMatchingOption(field, decision.selectedOptions(), decision.answer());
                 if (match.isEmpty()) {
                     markMissing(field, "The AI's answer didn't match any of the options.");

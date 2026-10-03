@@ -25,7 +25,8 @@ public class DiscoveryService {
     }
 
     public Result discover(Consumer<String> progress) {
-        UserProfile.JobPreferences prefs = profiles.load().preferences;
+        UserProfile profile = profiles.load();
+        UserProfile.JobPreferences prefs = profile.preferences;
         List<String> warnings = new ArrayList<>();
         List<Job> found = new ArrayList<>();
         for (JobSource source : sources) {
@@ -43,7 +44,7 @@ public class DiscoveryService {
         int matched = 0;
         int added = 0;
         for (Job job : found) {
-            if (!JobFilter.matches(job, prefs)) continue;
+            if (!JobFilter.matches(job, prefs, profile.personal.country)) continue;
             matched++;
             if (jobs.insertIfNew(job)) added++;
         }

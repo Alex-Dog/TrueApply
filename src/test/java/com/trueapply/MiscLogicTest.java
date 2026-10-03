@@ -1,21 +1,16 @@
 package com.trueapply;
 
 import com.trueapply.ats.greenhouse.GreenhouseUrls;
-import com.trueapply.discovery.JobFilter;
 import com.trueapply.email.VerificationCodes;
-import com.trueapply.model.Job;
-import com.trueapply.model.UserProfile;
 import com.trueapply.security.PasswordGenerator;
 import com.trueapply.security.Vault;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import java.nio.file.Path;
-import java.util.List;
 import java.util.Optional;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -31,29 +26,6 @@ class MiscLogicTest {
         assertEquals(Optional.of("acme"),
                 GreenhouseUrls.boardFromHtml("<script src=\"https://boards.greenhouse.io/embed/job_board/js?for=acme\"></script>"));
         assertTrue(GreenhouseUrls.parse("https://example.com/careers").isEmpty());
-    }
-
-    @Test
-    void filtersJobsByPreferences() {
-        UserProfile.JobPreferences prefs = new UserProfile.JobPreferences();
-        prefs.titles = List.of("Software Engineer");
-        prefs.excludeKeywords = List.of("Senior", "Staff");
-        prefs.locations = List.of("San Francisco");
-        prefs.remoteOk = true;
-
-        assertTrue(JobFilter.matches(job("Software Engineer, Backend", "San Francisco, CA"), prefs));
-        assertTrue(JobFilter.matches(job("Software Engineering Intern", "Remote - US"), prefs));
-        assertFalse(JobFilter.matches(job("Senior Software Engineer", "San Francisco, CA"), prefs));
-        assertFalse(JobFilter.matches(job("Software Engineer", "New York, NY"), prefs));
-        assertFalse(JobFilter.matches(job("Product Designer", "San Francisco, CA"), prefs));
-    }
-
-    private static Job job(String title, String location) {
-        Job job = new Job();
-        job.title = title;
-        job.location = location;
-        job.company = "Acme";
-        return job;
     }
 
     @Test

@@ -59,21 +59,28 @@ public final class Ui {
     public static Label muted(String text) {
         Label label = new Label(text);
         label.getStyleClass().add(Styles.TEXT_MUTED);
-        label.setWrapText(true);
-        return label;
+        return wrapping(label);
     }
 
     public static Label bold(String text) {
         Label label = new Label(text);
         label.getStyleClass().add(Styles.TEXT_BOLD);
-        label.setWrapText(true);
-        return label;
+        return wrapping(label);
     }
 
     /** Small rounded tag. Variants: accent, success, warning, danger, neutral. */
     public static Label chip(String text, String variant) {
         Label label = new Label(text);
         label.getStyleClass().addAll("chip", "chip-" + variant);
+        label.setMinWidth(Region.USE_PREF_SIZE); // never squeeze a tag into "…"
+        return label;
+    }
+
+    /** Wraps onto as many lines as needed instead of truncating with "…". */
+    public static Label wrapping(Label label) {
+        label.setWrapText(true);
+        label.setMinHeight(Region.USE_PREF_SIZE);
+        label.setMaxWidth(Double.MAX_VALUE);
         return label;
     }
 

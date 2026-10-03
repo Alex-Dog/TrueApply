@@ -71,6 +71,9 @@ public class AdzunaJobSource implements JobSource {
                 .append("/search/1?app_id=").append(enc(settings.adzunaAppId()))
                 .append("&app_key=").append(enc(settings.adzunaAppKey()))
                 .append("&results_per_page=50&max_days_old=30&content-type=application/json");
+        if ("Internship".equals(prefs.employmentType) && !Text.normalize(what).contains("intern")) {
+            what = (what + " intern").trim();
+        }
         if (!what.isEmpty()) url.append("&what=").append(enc(what));
         if (!where.isEmpty()) url.append("&where=").append(enc(where));
         if (prefs.minimumSalary != null) url.append("&salary_min=").append(prefs.minimumSalary);
