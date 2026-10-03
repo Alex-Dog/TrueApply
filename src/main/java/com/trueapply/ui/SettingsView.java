@@ -3,6 +3,7 @@ package com.trueapply.ui;
 import atlantafx.base.controls.ToggleSwitch;
 import atlantafx.base.theme.Styles;
 import com.trueapply.AppContext;
+import com.trueapply.discovery.JobSource;
 import com.trueapply.settings.AppSettings;
 import com.trueapply.util.AppPaths;
 import com.trueapply.util.Text;
@@ -34,6 +35,8 @@ public class SettingsView implements View {
     private final ComboBox<String> channel = new ComboBox<>();
     private final ToggleSwitch dark = new ToggleSwitch("Dark theme");
     private final Label saved = Ui.muted("");
+    private final java.util.Map<String, ToggleSwitch> sourceToggles = new java.util.LinkedHashMap<>();
+    private final Label learned = Ui.muted("");
     private ConnectionsPanel connections;
     private final VBox connectionsHolder = new VBox();
 
@@ -47,6 +50,19 @@ public class SettingsView implements View {
         channel.getItems().addAll("msedge", "chrome", "chromium");
 
         GridPane discovery = Ui.form();
+        VBox sourceBox = new VBox(8);
+        for (JobSource source : ctx.discovery.sources()) {
+            ToggleSwitch toggle = new ToggleSwitch(source.name() + " — " + describe(source.id()));
+            sourceToggles.put(source.id(), toggle);
+            sourceBox.getChildren().add(toggle);
+        }
+        Ui.addRow(discovery, "Sources", sourceBox);
+        Button forget = Ui.button("Forget", Feather.TRASH_2, Styles.FLAT, Styles.SMALL);
+        forget.setOnAction(e -> {
+            ctx.settings.clearLearnedGreenhouseBoards();
+            learned.setText(learnedText());
+        });
+        Ui.addRow(discovery, "Learned boards", Ui.row(learned, forget));
         Ui.addRow(discovery, "Adzuna App ID", adzunaId);
         Ui.addRow(discovery, "Adzuna App key", adzunaKey);
         Ui.addRow(discovery, "Greenhouse boards", boards);
@@ -81,7 +97,23 @@ public class SettingsView implements View {
         root.setFitToWidth(true);
     }
 
+    private static String describe(String sourceId) {
+        return switch (sourceId) {
+            case "simplify" -> "community internship & new-grad lists (no key needed)";
+            case "greenhouse" -> "every job on the company boards below, plus boards found by other sources";
+            case "adzuna" -> "large job aggregator (needs a free API key)";
+            default -> "";
+        };
+    }
+
+    private String learnedText() {
+        int n = ctx.settings.learnedGreenhouseBoards().size();
+        return n == 0 ? "None yet. Boards found by other sources are added here automatically."
+                : n + " Greenhouse boards found automatically and scanned on every search.";
+    }
+
     private void save() {
+        sourceToggles.forEach((id, toggle) -> ctx.settings.setSourceEnabled(id, toggle.isSelected()));
         connections.save();
         ctx.settings.setAdzunaAppId(adzunaId.getText().trim());
         ctx.settings.setAdzunaAppKey(adzunaKey.getText().trim());
@@ -114,6 +146,8 @@ public class SettingsView implements View {
         optionalCreative.setSelected(s.includeOptionalCreative());
         channel.setValue(s.browserChannel());
         dark.setSelected(s.darkTheme());
+        sourceToggles.forEach((id, toggle) -> toggle.setSelected(s.sourceEnabled(id)));
+        learned.setText(learnedText());
         saved.setText("");
     }
 }

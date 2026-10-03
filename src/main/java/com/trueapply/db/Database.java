@@ -81,6 +81,20 @@ public final class Database implements AutoCloseable {
             st.execute("CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status)");
             st.execute("CREATE INDEX IF NOT EXISTS idx_apps_status ON applications(status)");
         }
+        addColumnIfMissing("jobs", "job_type", "TEXT");
+    }
+
+    /** Lightweight schema evolution for databases created by older versions. */
+    private void addColumnIfMissing(String table, String column, String type) throws SQLException {
+        try (Statement st = connection.createStatement();
+             java.sql.ResultSet rs = st.executeQuery("PRAGMA table_info(" + table + ")")) {
+            while (rs.next()) {
+                if (rs.getString("name").equalsIgnoreCase(column)) return;
+            }
+        }
+        try (Statement st = connection.createStatement()) {
+            st.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+        }
     }
 
     @Override

@@ -23,6 +23,11 @@ public class Job {
     public Instant postedAt;
     public Instant discoveredAt;
     public JobStatus status = JobStatus.NEW;
+    /**
+     * Employment type when the source states it ("Internship", "Full-time"...); null means
+     * unknown, and filters fall back to reading the title.
+     */
+    public String jobType;
 
     public boolean isSupported() {
         return ats != null && atsBoard != null && atsJobId != null;

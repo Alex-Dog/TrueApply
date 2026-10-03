@@ -73,6 +73,30 @@ public class AppSettings {
         repo.put("adzuna.appKey", value);
     }
 
+    /** Each discovery source can be switched off in Settings. */
+    public boolean sourceEnabled(String sourceId) {
+        return bool("source." + sourceId + ".enabled", true);
+    }
+
+    public void setSourceEnabled(String sourceId, boolean enabled) {
+        putBool("source." + sourceId + ".enabled", enabled);
+    }
+
+    /** Greenhouse boards spotted in other sources' results; scanned alongside the configured ones. */
+    public java.util.Set<String> learnedGreenhouseBoards() {
+        return new java.util.TreeSet<>(repo.get("greenhouse.learnedBoards").map(Text::splitList).orElse(List.of()));
+    }
+
+    public void addLearnedGreenhouseBoards(java.util.Collection<String> boards) {
+        java.util.Set<String> all = learnedGreenhouseBoards();
+        boards.forEach(b -> all.add(b.toLowerCase(java.util.Locale.ROOT)));
+        repo.put("greenhouse.learnedBoards", String.join("\n", all));
+    }
+
+    public void clearLearnedGreenhouseBoards() {
+        repo.put("greenhouse.learnedBoards", "");
+    }
+
     public List<String> greenhouseBoards() {
         return repo.get("greenhouse.boards").map(Text::splitList).orElse(DEFAULT_GREENHOUSE_BOARDS);
     }

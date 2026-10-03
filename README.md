@@ -37,7 +37,7 @@ App data (database, browser profile, resumes) lives in `%APPDATA%\TrueApply`, or
 ## How it works
 
 ```
-Discover (Greenhouse boards + Adzuna)
+Discover (SimplifyJobs lists → Adzuna → Greenhouse boards, incl. boards learned from the others)
    → Analyze: Greenhouse Job Board API returns every question as JSON
    → FormAnswerer (AI) sorts each field: FACTUAL / DEMOGRAPHIC / CREATIVE / MISSING_INFO
        └ CreativeGuard (regex backstop) forces essay-style questions to CREATIVE no matter what
@@ -55,7 +55,7 @@ Discover (Greenhouse boards + Adzuna)
 | `ai/tasks` | Resume extraction, form answering + `CreativeGuard`, and job summaries. They only use `AiProvider`. |
 | `ats` | `ApplicationPlatform` (one per ATS) + `PlatformRegistry`. |
 | `ats/greenhouse` | API client, JSON → `FormField` parser, Playwright form filler |
-| `discovery` | `JobSource` implementations (Greenhouse, Adzuna) + preference filter |
+| `discovery` | `JobSource` implementations (SimplifyJobs, Adzuna, Greenhouse boards), location/job-type filter |
 | `pipeline` | `ApplicationPipeline`, the application state machine (single worker thread) |
 | `email` | Gmail OAuth + verification-code extraction |
 | `db`, `security` | SQLite repositories and the AES-GCM vault for saved site passwords |
@@ -75,13 +75,24 @@ be typed in. To add another provider:
 `ai/` imports a vendor SDK. `StructuredSchemaTest` checks that every output record is
 accepted by every SDK's structured-output mode.
 
+### Job sources
+
+| Source | Key? | What it adds |
+|---|---|---|
+| SimplifyJobs | none | Community internship and new-grad lists on GitHub, with direct ATS links |
+| Greenhouse boards | none | Every job at the companies in Settings, plus boards **learned** automatically when another source links to one |
+| Adzuna | free API key | General aggregator; redirects are followed to find Greenhouse forms |
+
+Lever and Ashby postings are tagged "coming soon" and hidden behind Discover's manual-only
+toggle. To add a source, implement `JobSource` and add it to the list in `AppContext`; it
+gets an on/off switch in Settings automatically. Remotive, Himalayas and The Muse were
+considered but dropped, because their postings hide the employer's real application link.
+
 ### Adding Lever / Ashby
 
 1. Add an `ApplicationPlatform` implementation under `ats/lever` (or `ats/ashby`) and
    register it in `AppContext`.
-2. Teach discovery to tag those jobs with `AtsType.LEVER` / `ASHBY`.
-
-`AtsType` already has both values. The pipeline, inbox, and history are platform-agnostic.
+Discovery already tags those jobs (`AtsUrls`) and `AtsType` already has both values. The pipeline, inbox, and history are platform-agnostic.
 
 ### Debugging the form filler
 

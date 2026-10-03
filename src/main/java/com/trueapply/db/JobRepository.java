@@ -14,7 +14,7 @@ import java.util.Optional;
 
 public class JobRepository {
     private static final String COLUMNS =
-            "id, dedupe_key, source, ats, ats_board, ats_job_id, company, title, location, url, snippet, posted_at, discovered_at, status";
+            "id, dedupe_key, source, ats, ats_board, ats_job_id, company, title, location, url, snippet, posted_at, discovered_at, status, job_type";
 
     private final Database db;
 
@@ -27,8 +27,8 @@ public class JobRepository {
         synchronized (db) {
             try (PreparedStatement ps = db.connection().prepareStatement("""
                     INSERT OR IGNORE INTO jobs(dedupe_key, source, ats, ats_board, ats_job_id, company, title, location,
-                                               url, snippet, posted_at, discovered_at, status)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", Statement.RETURN_GENERATED_KEYS)) {
+                                               url, snippet, posted_at, discovered_at, status, job_type)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", Statement.RETURN_GENERATED_KEYS)) {
                 ps.setString(1, job.dedupeKey);
                 ps.setString(2, job.source);
                 ps.setString(3, job.ats == null ? null : job.ats.name());
@@ -42,6 +42,7 @@ public class JobRepository {
                 ps.setString(11, job.postedAt == null ? null : job.postedAt.toString());
                 ps.setString(12, (job.discoveredAt == null ? Instant.now() : job.discoveredAt).toString());
                 ps.setString(13, job.status.name());
+                ps.setString(14, job.jobType);
                 if (ps.executeUpdate() == 0) return false;
                 try (ResultSet keys = ps.getGeneratedKeys()) {
                     if (keys.next()) job.id = keys.getLong(1);
@@ -107,6 +108,7 @@ public class JobRepository {
         job.postedAt = posted == null ? null : Instant.parse(posted);
         job.discoveredAt = Instant.parse(rs.getString("discovered_at"));
         job.status = Job.JobStatus.valueOf(rs.getString("status"));
+        job.jobType = rs.getString("job_type");
         return job;
     }
 }

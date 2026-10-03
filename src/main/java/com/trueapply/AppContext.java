@@ -14,6 +14,7 @@ import com.trueapply.db.SettingsRepository;
 import com.trueapply.discovery.AdzunaJobSource;
 import com.trueapply.discovery.DiscoveryService;
 import com.trueapply.discovery.GreenhouseJobSource;
+import com.trueapply.discovery.SimplifyJobsSource;
 import com.trueapply.email.GmailService;
 import com.trueapply.pipeline.ApplicationPipeline;
 import com.trueapply.security.Vault;
@@ -49,8 +50,11 @@ public final class AppContext implements AutoCloseable {
         accounts = new AccountRepository(database, new Vault(AppPaths.vaultKey()));
         gmail = new GmailService(settings);
         platforms = new PlatformRegistry().register(new GreenhousePlatform());
-        discovery = new DiscoveryService(
-                List.of(new GreenhouseJobSource(settings), new AdzunaJobSource(settings)), jobs, profiles);
+        // Greenhouse boards last: it also scans boards the other sources led us to.
+        discovery = new DiscoveryService(List.of(
+                new SimplifyJobsSource(),
+                new AdzunaJobSource(settings),
+                new GreenhouseJobSource(settings)), jobs, profiles, settings);
         pipeline = new ApplicationPipeline(applications, jobs, profiles, settings, platforms, this::ai,
                 new BrowserLauncher(settings), gmail, events);
         reloadAi();

@@ -37,7 +37,10 @@ public final class JobFilter {
         if (prefs.excludeCompanies.stream().anyMatch(c -> !Text.isBlank(c) && company.contains(Text.normalize(c)))) {
             return false;
         }
-        if (!matchesEmploymentType(job.title, prefs.employmentType)) return false;
+        boolean typeOk = job.jobType != null
+                ? "Any".equals(prefs.employmentType) || job.jobType.equals(prefs.employmentType)
+                : matchesEmploymentType(job.title, prefs.employmentType);
+        if (!typeOk) return false;
         return LocationMatcher.matches(job.location, prefs.locations, prefs.remoteOk, homeCountry);
     }
 

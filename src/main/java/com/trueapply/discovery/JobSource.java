@@ -10,10 +10,13 @@ import java.util.function.Consumer;
 /** A place to find postings. Results are filtered by {@link JobFilter} afterwards. */
 public interface JobSource {
 
+    /** Stable id used for the on/off setting, e.g. "greenhouse". */
+    String id();
+
     String name();
 
     /** False when the source needs configuration (e.g. API keys) that isn't there yet. */
-    boolean isEnabled();
+    boolean isConfigured();
 
-    List<Job> fetch(UserProfile.JobPreferences preferences, Consumer<String> progress) throws IOException;
+    List<Job> fetch(UserProfile profile, Consumer<String> progress) throws IOException;
 }

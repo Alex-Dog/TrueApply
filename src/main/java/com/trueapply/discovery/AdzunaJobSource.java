@@ -1,6 +1,7 @@
 package com.trueapply.discovery;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.trueapply.ats.AtsUrls;
 import com.trueapply.ats.greenhouse.GreenhouseApi;
 import com.trueapply.ats.greenhouse.GreenhouseUrls;
 import com.trueapply.model.AtsType;
@@ -42,17 +43,23 @@ public class AdzunaJobSource implements JobSource {
     }
 
     @Override
+    public String id() {
+        return "adzuna";
+    }
+
+    @Override
     public String name() {
         return "Adzuna";
     }
 
     @Override
-    public boolean isEnabled() {
+    public boolean isConfigured() {
         return !Text.isBlank(settings.adzunaAppId()) && !Text.isBlank(settings.adzunaAppKey());
     }
 
     @Override
-    public List<Job> fetch(UserProfile.JobPreferences prefs, Consumer<String> progress) throws IOException {
+    public List<Job> fetch(UserProfile profile, Consumer<String> progress) throws IOException {
+        UserProfile.JobPreferences prefs = profile.preferences;
         List<String> titles = prefs.titles.isEmpty() ? List.of("") : prefs.titles.stream().limit(MAX_TITLES).toList();
         String where = prefs.locations.isEmpty() ? "" : prefs.locations.getFirst();
         List<Job> jobs = new ArrayList<>();
@@ -129,16 +136,17 @@ public class AdzunaJobSource implements JobSource {
                     .GET()
                     .build());
             String finalUrl = response.uri().toString();
-            Optional<GreenhouseUrls.Ref> ref = GreenhouseUrls.parse(finalUrl);
-            if (ref.isEmpty()) {
-                Optional<String> jobId = GreenhouseUrls.ghJid(finalUrl);
-                Optional<String> board = GreenhouseUrls.boardFromHtml(response.body());
-                if (jobId.isPresent() && board.isPresent()) ref = Optional.of(new GreenhouseUrls.Ref(board.get(), jobId.get()));
+            if (AtsUrls.tag(job, finalUrl)) {
+                job.url = finalUrl;
+                return;
             }
-            if (ref.isPresent()) {
+            // Company careers pages that embed Greenhouse pass the job id as gh_jid.
+            Optional<String> jobId = GreenhouseUrls.ghJid(finalUrl);
+            Optional<String> board = GreenhouseUrls.boardFromHtml(response.body());
+            if (jobId.isPresent() && board.isPresent()) {
                 job.ats = AtsType.GREENHOUSE;
-                job.atsBoard = ref.get().board();
-                job.atsJobId = ref.get().jobId();
+                job.atsBoard = board.get();
+                job.atsJobId = jobId.get();
                 job.dedupeKey = GreenhouseApi.dedupeKey(job.atsBoard, job.atsJobId);
                 job.url = finalUrl;
             }

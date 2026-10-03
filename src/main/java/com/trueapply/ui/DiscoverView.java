@@ -12,6 +12,7 @@ import javafx.collections.FXCollections;
 import javafx.collections.transformation.FilteredList;
 import javafx.scene.Node;
 import javafx.scene.control.Button;
+import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
 import javafx.scene.control.SelectionMode;
@@ -33,6 +34,7 @@ public class DiscoverView implements View {
     private final TableView<Job> table = new TableView<>(jobs);
     private final Label status = Ui.muted("");
     private final Label hiddenNote = Ui.muted("");
+    private final CheckBox showManual = new CheckBox("Show jobs I'd have to apply to myself");
     private final ProgressIndicator spinner = new ProgressIndicator();
     private final Button find = Ui.button("Find jobs", Feather.SEARCH, Styles.ACCENT);
     private final VBox root;
@@ -51,6 +53,7 @@ public class DiscoverView implements View {
             jobs.setPredicate(job -> q.isEmpty()
                     || Text.normalize(job.title + " " + job.company + " " + job.location).contains(q));
         });
+        showManual.selectedProperty().addListener((o, a, b) -> refresh());
 
         Button apply = Ui.button("Apply to selected", Feather.SEND, Styles.SUCCESS);
         apply.setOnAction(e -> applySelected());
@@ -62,8 +65,10 @@ public class DiscoverView implements View {
         buildTable();
         VBox.setVgrow(table, Priority.ALWAYS);
         root = Ui.page("Discover",
-                "Matches for your job preferences from Greenhouse boards and Adzuna. Select jobs (Ctrl/Shift-click) and apply.",
-                Ui.row(find, spinner, status, Ui.hgrow(), filter),
+                "Matches for your job preferences from SimplifyJobs, Greenhouse company boards and Adzuna. "
+                        + "Select jobs (Ctrl/Shift-click) and apply.",
+                Ui.row(find, spinner, Ui.hgrow(), showManual, filter),
+                status,
                 table,
                 Ui.row(apply, dismiss, hiddenNote, Ui.hgrow(),
                         Ui.muted("Double-click a row to open the posting.")));
@@ -99,10 +104,13 @@ public class DiscoverView implements View {
         });
     }
 
+    private boolean canAutoApply(Job job) {
+        return job.isSupported() && ctx.platforms.supports(job.ats);
+    }
+
     private String applyVia(Job job) {
-        if (job.isSupported() && ctx.platforms.supports(job.ats)) {
-            return job.ats.displayName() + ("adzuna".equals(job.source) ? " (via Adzuna)" : "");
-        }
+        if (canAutoApply(job)) return job.ats.displayName();
+        if (job.ats != null) return job.ats.displayName() + " (coming soon)";
         return "Manual only";
     }
 
@@ -128,10 +136,15 @@ public class DiscoverView implements View {
         java.util.List<Job> matching = all.stream()
                 .filter(j -> com.trueapply.discovery.JobFilter.matches(j, profile.preferences, profile.personal.country))
                 .toList();
-        source.setAll(matching);
-        int hidden = all.size() - matching.size();
-        hiddenNote.setText(hidden == 0 ? "" : hidden + " earlier result" + (hidden == 1 ? "" : "s")
-                + " hidden by your current job preferences.");
+        java.util.List<Job> shown = showManual.isSelected()
+                ? matching : matching.stream().filter(this::canAutoApply).toList();
+        source.setAll(shown);
+        int hiddenByPrefs = all.size() - matching.size();
+        int manualOnly = matching.size() - shown.size();
+        java.util.List<String> notes = new java.util.ArrayList<>();
+        if (hiddenByPrefs > 0) notes.add(hiddenByPrefs + " hidden by your job preferences");
+        if (manualOnly > 0) notes.add(manualOnly + " manual-only hidden");
+        hiddenNote.setText(String.join(" · ", notes));
     }
 
     private void discover() {
@@ -143,7 +156,16 @@ public class DiscoverView implements View {
                 (DiscoveryService.Result result) -> {
                     find.setDisable(false);
                     spinner.setVisible(false);
-                    String text = result.matched() + " matching jobs, " + result.added() + " new.";
+                    String text = result.added() + " new of " + result.matched() + " matching";
+                    if (!result.perSource().isEmpty()) {
+                        text += " (" + result.perSource().entrySet().stream()
+                                .map(e -> e.getKey() + " " + e.getValue())
+                                .collect(java.util.stream.Collectors.joining(", ")) + ")";
+                    }
+                    text += ".";
+                    if (result.learnedBoards() > 0) {
+                        text += " Learned " + result.learnedBoards() + " new Greenhouse boards.";
+                    }
                     if (!result.warnings().isEmpty()) text += "  " + String.join(" ", result.warnings());
                     status.setText(text);
                     refresh();
