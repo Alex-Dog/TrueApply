@@ -13,6 +13,11 @@ public class UserProfile {
     public List<WorkExperience> experience = new ArrayList<>();
     public List<Education> education = new ArrayList<>();
     public List<String> skills = new ArrayList<>();
+    /**
+     * The skills to select when a form asks for a list of skills (Workday's skills picker, skill
+     * checklists). Chosen by the user; used as-is instead of letting the AI pick from {@link #skills}.
+     */
+    public List<String> formSkills = new ArrayList<>();
 
     /** Absolute path to the resume file that gets uploaded to applications. */
     public String resumePath;

@@ -18,6 +18,11 @@ public class FormField {
     public String group = "Application";
     /** Platform-specific widget hint (Workday: "dropdown", "prompt", "date"...); null when obvious. */
     public String control;
+    /**
+     * The site currently holds a temporary stand-in for this field (used to look ahead at later
+     * pages). It must be replaced by a real answer, or cleared, before anything is submitted.
+     */
+    public boolean placeholder;
 
     public FieldCategory category = FieldCategory.FACTUAL;
     /** Text answer, chosen option for single selects, or a file path for file fields. */

@@ -31,6 +31,7 @@ public class SettingsView implements View {
     private final TextArea boards = Ui.textArea("", 6);
     private final TextArea workdaySites = Ui.textArea("", 6);
     private final ToggleSwitch createWorkdayAccounts = new ToggleSwitch("Create Workday accounts for me");
+    private final ToggleSwitch lookAhead = new ToggleSwitch("Look ahead to ask all questions at once");
     private final ToggleSwitch dryRun = new ToggleSwitch("Dry run — fill forms but never press Submit");
     private final ToggleSwitch showBrowser = new ToggleSwitch("Show the browser while applying");
     private final ToggleSwitch optionalCreative = new ToggleSwitch("Also hold applications for optional creative questions");
@@ -86,6 +87,11 @@ public class SettingsView implements View {
         Ui.addRow(applying, "Creative questions", optionalCreative);
         Ui.addRow(applying, "", Ui.muted("Required creative questions always wait for you. Optional ones are left "
                 + "blank unless this is on."));
+        Ui.addRow(applying, "Multi-page forms", lookAhead);
+        Ui.addRow(applying, "", Ui.muted("Workday shows questions page by page. When on, TrueApply fills your questions "
+                + "with temporary answers (like “(answer pending)”) to read every page first, then asks you everything at "
+                + "once and replaces them before submitting. Agreements and uploads are never filled temporarily. "
+                + "The temporary answers sit in your Workday draft until then."));
         Ui.addRow(applying, "Workday accounts", createWorkdayAccounts);
         Ui.addRow(applying, "", Ui.muted("Workday needs a separate account at every company. When on, TrueApply "
                 + "creates one with your email and a random password (saved on the Accounts page), which ticks that "
@@ -136,6 +142,7 @@ public class SettingsView implements View {
         ctx.settings.setGreenhouseBoards(Text.splitList(boards.getText().toLowerCase()));
         ctx.settings.setWorkdaySites(workdaySites.getText().lines().map(String::trim).filter(l -> !l.isEmpty()).toList());
         ctx.settings.setCreateWorkdayAccounts(createWorkdayAccounts.isSelected());
+        ctx.settings.setLookAhead(lookAhead.isSelected());
         ctx.settings.setDryRun(dryRun.isSelected());
         ctx.settings.setShowBrowser(showBrowser.isSelected());
         ctx.settings.setIncludeOptionalCreative(optionalCreative.isSelected());
@@ -161,6 +168,7 @@ public class SettingsView implements View {
         boards.setText(String.join("\n", s.greenhouseBoards()));
         workdaySites.setText(String.join("\n", s.workdaySiteLines()));
         createWorkdayAccounts.setSelected(s.createWorkdayAccounts());
+        lookAhead.setSelected(s.lookAhead());
         dryRun.setSelected(s.dryRun());
         showBrowser.setSelected(s.showBrowser());
         optionalCreative.setSelected(s.includeOptionalCreative());

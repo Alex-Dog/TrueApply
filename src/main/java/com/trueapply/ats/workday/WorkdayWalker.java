@@ -58,6 +58,9 @@ final class WorkdayWalker {
     private static final Pattern RESUME = Pattern.compile("resume|cv|curriculum", Pattern.CASE_INSENSITIVE);
     private static final Pattern RESUME_STEP = Pattern.compile("autofill|resume|quick apply", Pattern.CASE_INSENSITIVE);
     private static final Pattern PREFERRED_NAME = Pattern.compile("preferred name", Pattern.CASE_INSENSITIVE);
+    /** The date next to a signature (e.g. the self-identification forms): always today. */
+    private static final Pattern SIGNING_DATE = Pattern.compile(
+            "^\\s*(date|today'?s date|current date|signature date|date signed|date of signature)\\s*$", Pattern.CASE_INSENSITIVE);
 
     /** Reads every visible Workday form field on the page (see class comment). */
     private static final String EXTRACT_JS = """
@@ -122,7 +125,8 @@ final class WorkdayWalker {
                 else if (control === 'prompt') hasValue = !!c.querySelector('[data-automation-id="selectedItem"]');
                 else if (control === 'file') hasValue = !!c.querySelector('[data-automation-id="file-upload-successful"], [data-automation-id="delete-file"]');
                 else hasValue = [...c.querySelectorAll('input')].some(i => i.checked);
-                out.push({ id, index: counts[id], label, section, required, control, options, hasValue });
+                const fullDate = control === 'date' && !!c.querySelector('[data-automation-id^="dateSectionDay"]');
+                out.push({ id, index: counts[id], label, section, required, control, options, hasValue, fullDate });
               }
               return out;
             }""";
@@ -168,6 +172,13 @@ final class WorkdayWalker {
         for (int i = 0; i < MAX_STEPS; i++) {
             page.waitForTimeout(1_500);
             if (isConfirmation()) return SubmissionResult.submitted("Application submitted on Workday.");
+            if (onErrorPage()) {
+                Optional<SubmissionResult> recovered = recoverFromErrorPage(url);
+                if (recovered.isPresent()) return recovered.get();
+                lastStep = null; // a reload isn't "stuck on the same page"
+                i--;            // recoveries have their own limit
+                continue;
+            }
             if (signInVisible()) {
                 Optional<SubmissionResult> auth = authenticate(url);
                 if (auth.isPresent()) return auth.get();
@@ -179,13 +190,27 @@ final class WorkdayWalker {
             }
             sameStepCount = step.equals(lastStep) ? sameStepCount + 1 : 0;
             lastStep = step;
+            if (sameStepCount >= 1 && !parked.isEmpty()) {
+                // A temporary answer wasn't accepted (e.g. a number was expected): stop looking ahead
+                // and ask about everything found so far.
+                return askUser("Workday didn't accept a temporary answer on “" + step + "”, so TrueApply stopped looking ahead there.");
+            }
             if (sameStepCount >= 2) {
                 return handOffOrFail("Workday wouldn't move past “" + step + "”: " + String.join("; ", visibleErrors()));
             }
             ctx.progress().accept("Workday: " + step);
 
             waitForStepReady(); // Workday renders each page's form asynchronously
-            if (step.toLowerCase().contains("review")) return review();
+            if (step.toLowerCase().contains("review")) {
+                // Never submit while anything temporary is in place: first ask about it all.
+                if (!parked.isEmpty()) return askUser(null);
+                List<String> stillTemporary = app.fields.stream().filter(f -> f.placeholder).map(f -> f.label).toList();
+                if (!stillTemporary.isEmpty()) {
+                    // An answer exists but never made it onto the page: don't let the stand-in go out.
+                    return handOffOrFail("These still hold temporary answers: " + String.join("; ", stillTemporary) + ".");
+                }
+                return review();
+            }
             if (RESUME_STEP.matcher(step).find()) { // "Autofill with Resume" / "Quick Apply" upload page
                 uploadResumeIfAsked();
                 autofilled = true;
@@ -220,12 +245,16 @@ final class WorkdayWalker {
             PageBanner.clear(page);
             List<FormField> blocking = fields.stream()
                     .filter(f -> JobApplication.blocksSubmission(f, ctx.includeOptionalCreative()))
-                    .filter(f -> !prefilled.contains(f.key))
+                    // A value already on the page is fine unless it's our own temporary stand-in.
+                    .filter(f -> !prefilled.contains(f.key) || f.placeholder)
                     .toList();
             if (!blocking.isEmpty()) {
-                return SubmissionResult.needsInput("Answer " + blocking.size() + " question" + (blocking.size() == 1 ? "" : "s")
-                        + " from Workday's “" + step + "” page to continue. Workday reveals questions page by page,"
-                        + " so more may follow.");
+                // Look ahead: park temporary answers here so later pages' questions can be read too,
+                // and ask about all of them at once at the end. Some questions can't be stood in for.
+                boolean canLookAhead = ctx.lookAhead() && problems.isEmpty() && blocking.stream().allMatch(this::canStandIn);
+                if (!canLookAhead || !parkAll(blocking)) {
+                    return askUser(null);
+                }
             }
             if (!problems.isEmpty()) {
                 return handOffOrFail("Couldn't fill on “" + step + "”: " + String.join("; ", problems));
@@ -233,6 +262,150 @@ final class WorkdayWalker {
             clickNext();
         }
         return handOffOrFail("Workday's wizard had more steps than expected.");
+    }
+
+    // ---- Workday's "Something went wrong" screen ------------------------------------------------
+
+    private static final Pattern ERROR_TITLE = Pattern.compile("something went wrong", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ERROR_HINT = Pattern.compile("error code|refresh the page", Pattern.CASE_INSENSITIVE);
+    private static final Pattern ERROR_CODE = Pattern.compile("Error Code:\\s*(\\S+)", Pattern.CASE_INSENSITIVE);
+    private static final int MAX_RECOVERIES = 4;
+    private int recoveries;
+
+    private boolean onErrorPage() {
+        try {
+            return page.getByText(ERROR_TITLE).filter(visibleOnly()).count() > 0
+                    && page.getByText(ERROR_HINT).filter(visibleOnly()).count() > 0;
+        } catch (PlaywrightException e) {
+            return false;
+        }
+    }
+
+    /**
+     * Workday's generic error screen (it says to refresh). Often a session/draft mix-up, e.g. a
+     * fresh "Apply" while a draft already exists. First reload; after that reopen the posting,
+     * which by then shows "Continue Application" for the existing draft.
+     */
+    private Optional<SubmissionResult> recoverFromErrorPage(String url) {
+        String code = errorCode();
+        recoveries++;
+        WorkdayDebugLog.recordError(app, page, code, recoveries);
+        if (recoveries > MAX_RECOVERIES) {
+            return Optional.of(handOffOrFail("Workday keeps showing “Something went wrong” (error code " + code + ")."));
+        }
+        if (recoveries <= 2) { // twice, as the page asks; then reopen from the posting
+            ctx.progress().accept("Workday showed an error page (" + code + "); refreshing as it suggests…");
+            page.reload(new Page.ReloadOptions().setTimeout(60_000));
+            page.waitForTimeout(4_000);
+            return Optional.empty();
+        }
+        ctx.progress().accept("Workday's error page came back (" + code + "); reopening the application from the posting…");
+        return enterApplyFlow(url);
+    }
+
+    private String errorCode() {
+        try {
+            java.util.regex.Matcher m = ERROR_CODE.matcher(page.locator("body").innerText());
+            return m.find() ? m.group(1) : "unknown";
+        } catch (PlaywrightException e) {
+            return "unknown";
+        }
+    }
+
+    // ---- looking ahead with temporary answers --------------------------------------------------
+
+    /** Shown in a field while we look ahead; replaced by the real answer (or cleared) before submitting. */
+    static final String STAND_IN_TEXT = "(answer pending)";
+    /** Never stand in for agreements or anything that reads like a signature or attestation. */
+    private static final Pattern NO_STAND_IN = Pattern.compile(
+            "agree|consent|certif|attest|acknowledg|signature|sign here|terms|authoriz|true and complete|accurate",
+            Pattern.CASE_INSENSITIVE);
+
+    /** Fields given a temporary answer during this run, waiting for the user's real one. */
+    private final List<FormField> parked = new ArrayList<>();
+
+    private boolean canStandIn(FormField f) {
+        if (NO_STAND_IN.matcher(Text.orEmpty(f.label) + " " + Text.orEmpty(f.description)).find()) return false;
+        return switch (Text.orEmpty(f.control)) {
+            case "text", "textarea", "date", "prompt" -> true;
+            case "dropdown", "radio" -> !f.options.isEmpty();
+            default -> false; // files, checkboxes (often agreements): ask now
+        };
+    }
+
+    /** Fills each field with a stand-in; false if any wouldn't take (then we just ask now). */
+    private boolean parkAll(List<FormField> fields) {
+        for (FormField f : fields) {
+            String[] parts = f.key.split("\\|");
+            Locator c = container(parts[1], Integer.parseInt(parts[2]));
+            PageBanner.working(page, "looking ahead (temporary answer for “" + Text.truncate(f.label, 50) + "”)");
+            try {
+                switch (Text.orEmpty(f.control)) {
+                    case "date" -> fillDate(c, "01/2025");
+                    case "dropdown" -> chooseFromListbox(c, realOptions(f.options).getFirst());
+                    case "radio" -> {
+                        FormField first = new FormField(f.key, f.label, f.type, f.required);
+                        first.options = f.options;
+                        first.answer = f.options.getFirst();
+                        chooseRadio(c, first);
+                    }
+                    case "prompt" -> pickFirstPromptOption(c);
+                    default -> c.locator("textarea, input:not([type='hidden']):not([type='password']):not([data-automation-id='beecatcher'])")
+                            .first().fill(STAND_IN_TEXT);
+                }
+            } catch (PlaywrightException | IllegalStateException | java.util.NoSuchElementException e) {
+                return false;
+            }
+            f.placeholder = true;
+            parked.add(f);
+        }
+        return true;
+    }
+
+    /** Opens a picker and takes the first entry at each level until something is selected. */
+    private void pickFirstPromptOption(Locator c) {
+        Locator input = c.locator("input[data-automation-id='searchBox']");
+        if (input.count() == 0) input = c.locator("input:not([type='hidden'])");
+        openFreshList(c, input.first());
+        for (int level = 0; level < 3; level++) {
+            List<String> options = realOptions(openOptions(c));
+            if (options.isEmpty() || !clickOptionText(c, options.getFirst())) break;
+            page.waitForTimeout(800);
+            if (promptHas(c, null)) {
+                closeList();
+                return;
+            }
+        }
+        closeList();
+        throw new IllegalStateException("no option to stand in with");
+    }
+
+    private void clearStandIn(FormField field, List<String> problems) {
+        String[] parts = field.key.split("\\|");
+        Locator c = container(parts[1], Integer.parseInt(parts[2]));
+        String control = Text.orEmpty(field.control);
+        if (c.count() > 0 && (control.equals("text") || control.equals("textarea"))) {
+            try {
+                c.locator("textarea, input:not([type='hidden']):not([type='password']):not([data-automation-id='beecatcher'])")
+                        .first().fill("");
+                field.placeholder = false;
+                return;
+            } catch (PlaywrightException e) {
+                // fall through to asking the user
+            }
+        }
+        // Selections can't always be undone automatically; make sure it can't be submitted silently.
+        problems.add(field.label + " (still holds a temporary answer; choose the right one or clear it)");
+    }
+
+    /** Hands every unanswered question collected so far (across pages) to the user. */
+    private SubmissionResult askUser(String why) {
+        long count = app.pendingHumanFields(ctx.includeOptionalCreative());
+        String looked = parked.isEmpty() ? " Workday reveals questions page by page, so more may follow."
+                : " TrueApply looked ahead through the form with temporary answers, which it replaces with yours"
+                  + " before anything is submitted.";
+        return SubmissionResult.needsInput((why == null ? "" : why + " ") + "Answer " + count + " question"
+                + (count == 1 ? "" : "s") + " to continue." + looked);
     }
 
     // ---- getting into the wizard -----------------------------------------------------------
@@ -244,6 +417,7 @@ final class WorkdayWalker {
             return Optional.of(SubmissionResult.failed("Workday says you've already applied to this job."));
         }
         if (!currentStep().isEmpty() || signInVisible()) return Optional.empty(); // already inside the flow
+        if (onErrorPage()) return Optional.empty(); // the walk loop recovers from it
         Locator start = startButton(15_000);
         if (start == null) {
             WorkdayDebugLog.recordPage(app, "job posting", page, "no Apply / Continue Application button");
@@ -592,6 +766,8 @@ final class WorkdayWalker {
                 if (field == null) continue;
                 app.fields.add(field);
                 fresh.add(field);
+            } else if (isSigningDate(r)) {
+                answerToday(field); // refresh it: the application may be resumed on a later day
             } else if ("checkbox".equals(field.control) && PREFERRED_NAME.matcher(field.label).find()) {
                 field.answer = Text.isBlank(profile.personal.preferredName) ? "No" : "Yes";
                 field.category = FieldCategory.PROFILE;
@@ -599,7 +775,7 @@ final class WorkdayWalker {
             } else if ("dropdown".equals(field.control)) {
                 // Re-read the real choices; drop an earlier answer that isn't one of them.
                 List<String> current = dropdownOptions(r);
-                if (!current.isEmpty() && !current.equals(field.options)) {
+                if (!current.isEmpty()) {
                     field.options = new ArrayList<>(current);
                     if (field.hasAnswer() && OptionMatcher.bestMatch(current, field.answer) < 0) {
                         field.answer = null;
@@ -654,7 +830,12 @@ final class WorkdayWalker {
                 }
             }
             case "dropdown" -> field.options = dropdownOptions(r);
-            case "date" -> field.description = "A date; answer as MM/YYYY (or just YYYY if only a year is asked).";
+            case "date" -> {
+                if (isSigningDate(r)) answerToday(field);
+                else field.description = Boolean.TRUE.equals(r.get("fullDate"))
+                        ? "A full date; answer as MM/DD/YYYY."
+                        : "A date; answer as MM/YYYY (or just YYYY if only a year is asked).";
+            }
             case "prompt" -> field.description = "A searchable list; answer with the value to search for. Some lists are"
                     + " two-level (a category, then an item): answer as \"Category" + PATH_SEPARATOR + "Item\" when known.";
             default -> {
@@ -671,6 +852,18 @@ final class WorkdayWalker {
             }
         }
         return field;
+    }
+
+    private static boolean isSigningDate(Map<String, Object> r) {
+        return "date".equals(r.get("control")) && Boolean.TRUE.equals(r.get("fullDate"))
+                && SIGNING_DATE.matcher(String.valueOf(r.get("label"))).matches();
+    }
+
+    private static void answerToday(FormField field) {
+        field.answer = java.time.LocalDate.now().format(java.time.format.DateTimeFormatter.ofPattern("MM/dd/yyyy"));
+        field.category = FieldCategory.PROFILE;
+        field.source = AnswerSource.PROFILE;
+        field.note = "Today's date.";
     }
 
     private List<String> dropdownOptions(Map<String, Object> r) {
@@ -829,6 +1022,12 @@ final class WorkdayWalker {
         List<String> problems = new ArrayList<>();
         for (FormField field : fields) {
             boolean hadValue = prefilled.contains(field.key);
+            if (field.placeholder && !field.hasAnswer()
+                    && !JobApplication.blocksSubmission(field, ctx.includeOptionalCreative())) {
+                // Optional question the user left blank: take our temporary answer back out.
+                clearStandIn(field, problems);
+                continue;
+            }
             if (field.category == FieldCategory.SKIPPED || !field.hasAnswer()) {
                 // Questions for the user are handled by the caller (NEEDS_INPUT), not as fill problems.
                 if (field.required && !field.needsHuman() && field.category != FieldCategory.SKIPPED && !hadValue) {
@@ -837,9 +1036,9 @@ final class WorkdayWalker {
                 continue;
             }
             if (filledThisVisit.contains(field.key)) continue;
-            // Stop at once if the wizard moved on (e.g. a stray key press submitted the page),
-            // instead of timing out on every field that's no longer there.
-            if (!field.group.equals(currentStep())) throw new PageChanged();
+            // Stop at once if the wizard moved on (e.g. a stray key press submitted the page) or
+            // Workday swapped in its error screen, instead of timing out on every missing field.
+            if (!field.group.equals(currentStep()) || onErrorPage()) throw new PageChanged();
             String[] parts = field.key.split("\\|");
             Locator container = container(parts[1], Integer.parseInt(parts[2]));
             if (container.count() == 0) {
@@ -849,6 +1048,7 @@ final class WorkdayWalker {
             PageBanner.working(page, "filling “" + Text.truncate(field.label, 70) + "”");
             try {
                 fill(container, field);
+                field.placeholder = false; // the real answer replaced any temporary one
                 filledThisVisit.add(field.key);
             } catch (ChoiceNeeded e) {
                 // The value may have landed anyway (Enter auto-picks, or a slow re-render): check before asking.
@@ -887,7 +1087,10 @@ final class WorkdayWalker {
             case "date" -> fillDate(c, field.answer);
             case "file" -> c.locator("input[type='file']").first().setInputFiles(Path.of(field.answer));
             case "dropdown" -> chooseFromListbox(c, field.answer);
-            case "prompt" -> choosePrompt(c, field.answer);
+            case "prompt" -> {
+                if (!field.answers.isEmpty() && String.join(", ", field.answers).equals(field.answer)) chooseEach(c, field);
+                else choosePrompt(c, field.answer);
+            }
             case "radio" -> chooseRadio(c, field);
             case "checkbox" -> setChecked(c, c.locator("input[type='checkbox']").first(), "Yes".equalsIgnoreCase(field.answer));
             case "checkboxes" -> {
@@ -909,6 +1112,12 @@ final class WorkdayWalker {
         if (parts.month() != null && month.count() > 0) {
             int m = Month.valueOf(parts.month().toUpperCase()).getValue();
             setSpinButton(c, month.first(), "dateSectionMonth-display", String.format("%02d", m), String.valueOf(m));
+        }
+        // Full MM/DD/YYYY dates need a day too; when the answer has none, the 1st is a safe default.
+        Locator day = c.locator("input[data-automation-id='dateSectionDay-input']");
+        if (day.count() > 0) {
+            int d = parts.dayOrFirst();
+            setSpinButton(c, day.first(), "dateSectionDay-display", String.format("%02d", d), String.valueOf(d));
         }
         if (year.count() > 0) {
             setSpinButton(c, year.first(), "dateSectionYear-display", parts.year(), parts.year());
@@ -1056,11 +1265,15 @@ final class WorkdayWalker {
      * {@link ChoiceNeeded} with the real choices so the user can pick one.
      */
     private void choosePrompt(Locator c, String value) {
+        choosePrompt(c, value, 2_000);
+    }
+
+    private void choosePrompt(Locator c, String value, int settleMillis) {
         List<String> path = splitPath(value);
         String leaf = path.getLast();
         // Already set to something matching (Workday pre-fills e.g. the phone country code, and
         // restores saved draft answers a moment after the page loads)? Keep it.
-        Instant settle = Instant.now().plusMillis(2_000);
+        Instant settle = Instant.now().plusMillis(settleMillis);
         while (true) {
             if (promptHas(c, leaf)) return;
             if (Instant.now().isAfter(settle)) break;
@@ -1127,6 +1340,53 @@ final class WorkdayWalker {
         throw new ChoiceNeeded(!results.isEmpty() ? results : realOptions(top));
     }
 
+    /**
+     * A multi-select picker given a list (the user's skills for applications): exactly those
+     * entries. Removes anything else already selected (e.g. skills Workday took from the resume),
+     * then selects each one; entries Workday doesn't list are left out, never swapped for others.
+     */
+    private void chooseEach(Locator c, FormField field) {
+        page.waitForTimeout(2_000); // let a restored draft's selections appear before judging them
+        removeOtherSelections(c, field.answers);
+        List<String> notFound = new ArrayList<>();
+        for (String value : field.answers) {
+            try {
+                choosePrompt(c, value, 0);
+            } catch (ChoiceNeeded | IllegalStateException | PlaywrightException e) {
+                notFound.add(value);
+            }
+        }
+        if (notFound.size() == field.answers.size()) {
+            throw new IllegalStateException("Workday's list had none of: " + field.answer);
+        }
+        field.note = notFound.isEmpty() ? "Your skills for applications (Profile › Skills)."
+                : "Selected your skills except " + String.join(", ", notFound) + ", which Workday doesn't list"
+                  + " (or lists under several names).";
+    }
+
+    private void removeOtherSelections(Locator c, List<String> wanted) {
+        for (int guard = 0; guard < 80; guard++) {
+            Locator deletes = c.locator("[data-automation-id='DELETE_charm'], [aria-label^='Delete ']");
+            Locator unwanted = null;
+            for (int i = 0; i < deletes.count() && unwanted == null; i++) {
+                Locator delete = deletes.nth(i);
+                String name = String.valueOf(delete.evaluate("""
+                        e => {
+                          const a = (e.getAttribute('aria-label') || '').trim();
+                          if (/^delete\\s+/i.test(a)) return a.replace(/^delete\\s+/i, '').trim();
+                          const pill = e.closest('[data-automation-id="selectedItem"], li');
+                          return pill ? (pill.innerText || '').trim() : '';
+                        }"""));
+                if (!name.isEmpty() && wanted.stream().noneMatch(w -> OptionMatcher.bestMatch(List.of(name), w) >= 0)) {
+                    unwanted = delete;
+                }
+            }
+            if (unwanted == null) return;
+            unwanted.click(new Locator.ClickOptions().setForce(true));
+            page.waitForTimeout(300);
+        }
+    }
+
     /** Either one result to click, or several equally plausible ones to ask about. */
     record SearchPick(String choice, List<String> ambiguous) {
     }
@@ -1144,8 +1404,9 @@ final class WorkdayWalker {
         List<String> starts = new ArrayList<>();
         List<String> contains = new ArrayList<>();
         for (int i = 0; i < keys.size(); i++) {
-            if (keys.get(i).startsWith(w)) starts.add(results.get(i));
-            else if (keys.get(i).contains(w)) contains.add(results.get(i));
+            // Whole words only, so a short answer can't match inside a longer word.
+            if (keys.get(i).startsWith(w + " ")) starts.add(results.get(i));
+            else if ((" " + keys.get(i) + " ").contains(" " + w + " ")) contains.add(results.get(i));
         }
         List<String> candidates = !starts.isEmpty() ? starts : contains;
         if (candidates.size() == 1) return new SearchPick(candidates.getFirst(), List.of());
@@ -1190,8 +1451,7 @@ final class WorkdayWalker {
             return false;
         }
         if (chosen.isEmpty()) return false;
-        return want == null || OptionMatcher.bestMatch(chosen, want) >= 0
-                || chosen.stream().anyMatch(t -> Text.normalize(t).contains(Text.normalize(want)));
+        return want == null || OptionMatcher.bestMatch(chosen, want) >= 0;
     }
 
     private void closeList() {

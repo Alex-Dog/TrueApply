@@ -19,6 +19,8 @@ import java.util.function.Consumer;
  * @param includeOptionalCreative whether optional creative questions also wait for the user
  * @param accounts                saved job-site logins (encrypted)
  * @param createAccounts          whether the platform may create accounts on its own
+ * @param lookAhead               fill questions meant for the user with temporary answers to reach later
+ *                                pages, so every question can be asked at once (never submitted)
  */
 public record SubmissionContext(
         UserProfile profile,
@@ -30,5 +32,6 @@ public record SubmissionContext(
         Consumer<List<FormField>> answerer,
         boolean includeOptionalCreative,
         AccountRepository accounts,
-        boolean createAccounts) {
+        boolean createAccounts,
+        boolean lookAhead) {
 }

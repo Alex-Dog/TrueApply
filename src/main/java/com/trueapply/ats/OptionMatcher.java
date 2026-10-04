@@ -10,16 +10,19 @@ public final class OptionMatcher {
     private OptionMatcher() {
     }
 
-    /** Index of the best option for {@code value}, or -1. Exact, then prefix, then contains. */
+    /**
+     * Index of the best option for {@code value}, or -1. Exact, then prefix, then contains, always
+     * on whole words: "No" must not match "Not Hispanic or Latino".
+     */
     public static int bestMatch(List<String> optionTexts, String value) {
         String wanted = matchKey(value);
         if (wanted.isEmpty()) return -1;
         List<String> keys = optionTexts.stream().map(OptionMatcher::matchKey).toList();
         for (int i = 0; i < keys.size(); i++) if (keys.get(i).equals(wanted)) return i;
         // Shortest wins, so "United States" picks "United States +1" over "United States Minor Outlying Islands".
-        int prefix = shortest(keys, o -> o.startsWith(wanted));
+        int prefix = shortest(keys, o -> o.startsWith(wanted + " "));
         if (prefix >= 0) return prefix;
-        int contains = shortest(keys, o -> o.contains(wanted));
+        int contains = shortest(keys, o -> (" " + o + " ").contains(" " + wanted + " "));
         if (contains >= 0) return contains;
         // "Computer Science and Engineering" → "Computer Science": the longest option inside the value.
         int best = -1;

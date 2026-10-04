@@ -14,4 +14,14 @@ class DatePartsTest {
         assertEquals(new DateParts(null, null), DateParts.parse("Present"));
         assertEquals(new DateParts(null, null), DateParts.parse(null));
     }
+
+    @Test
+    void parsesFullDatesAndDefaultsTheDay() {
+        assertEquals(new DateParts("May", "2026", 14), DateParts.parse("05/14/2026"));
+        assertEquals(new DateParts("May", "2026", 14), DateParts.parse("2026-05-14"));
+        assertEquals(new DateParts("May", "2026", 14), DateParts.parse("May 14th, 2026"));
+        assertEquals(new DateParts("March", "2020"), DateParts.parse("Mar 2020"));
+        assertEquals(1, DateParts.parse("05/2026").dayOrFirst());
+        assertEquals(14, DateParts.parse("05/14/2026").dayOrFirst());
+    }
 }

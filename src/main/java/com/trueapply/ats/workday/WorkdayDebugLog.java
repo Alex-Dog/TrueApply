@@ -86,6 +86,12 @@ final class WorkdayDebugLog {
         write(header(app) + "page structure for step: " + step + "\n" + structure + "\n\n");
     }
 
+    /** Workday's "Something went wrong" screen: when, where, which code, and which recovery attempt. */
+    static void recordError(JobApplication app, Page page, String code, int attempt) {
+        write(header(app) + "workday error page | code: " + code + " | recovery attempt " + attempt
+                + " | url: " + safeUrl(page) + "\n\n");
+    }
+
     private static String header(JobApplication app) {
         return "==== " + Instant.now() + " | " + (app.job == null ? "" : app.job.company + " | " + app.job.url) + "\n";
     }

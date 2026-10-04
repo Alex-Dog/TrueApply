@@ -2,6 +2,7 @@ package com.trueapply.ai.tasks;
 
 import com.trueapply.ai.AiProvider;
 import com.trueapply.ai.AiRequest;
+import com.trueapply.ats.OptionMatcher;
 import com.trueapply.model.AnswerSource;
 import com.trueapply.model.FieldCategory;
 import com.trueapply.model.FieldType;
@@ -16,6 +17,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.regex.Pattern;
 
 /**
  * Classifies each form field and answers the non-creative ones from the profile. Creative
@@ -69,7 +71,17 @@ public class FormAnswerer {
                 markCreative(field, "Free-response question — reserved for you.");
                 continue;
             }
+            if (applySkillList(field, profile)) continue;
             if (applySavedAnswer(field, profile)) continue;
+            Optional<String> ethnicity = field.type == FieldType.SINGLE_SELECT
+                    ? EthnicityMatcher.pick(field.options, profile.demographics) : Optional.empty();
+            if (ethnicity.isPresent()) { // merged Hispanic/Latino + race list: answer straight from the profile
+                field.answer = ethnicity.get();
+                field.category = FieldCategory.DEMOGRAPHIC;
+                field.source = AnswerSource.PROFILE;
+                field.note = "From your self-identification answers.";
+                continue;
+            }
             pending.add(field);
         }
         if (pending.isEmpty()) return;
@@ -139,6 +151,46 @@ public class FormAnswerer {
                 }
             }
         }
+    }
+
+    private static final Pattern SKILLS_LABEL = Pattern.compile("\\bskills?\\b",Pattern.CASE_INSENSITIVE);
+    /** Free-text boxes that just want the list ("Skills", "Technical skills"), not "Describe your skills". */
+    private static final Pattern SKILLS_BOX_LABEL = Pattern.compile(
+            "^(technical |key |relevant |professional |your |list (of )?(your )?)?skills?( list)?$", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * Skill pickers and skill checklists get exactly the skills the user listed for forms, never
+     * the AI's pick. Skills a list doesn't offer are left out rather than swapped for others.
+     */
+    static boolean applySkillList(FormField field, UserProfile profile) {
+        if (profile.formSkills == null || profile.formSkills.isEmpty()) return false;
+        String label = field.label.substring(field.label.lastIndexOf('›') + 1).trim();
+        if (!SKILLS_LABEL.matcher(label).find()) return false;
+        if (field.type == FieldType.MULTI_SELECT && !field.options.isEmpty()) {
+            List<String> matched = new ArrayList<>();
+            for (String skill : profile.formSkills) {
+                int i = OptionMatcher.bestMatch(field.options, skill);
+                if (i >= 0 && !matched.contains(field.options.get(i))) matched.add(field.options.get(i));
+            }
+            if (matched.isEmpty()) {
+                markMissing(field, "None of the skills you listed for applications are options here.");
+                return true;
+            }
+            field.answers = matched;
+        } else if (field.type == FieldType.SINGLE_SELECT && field.options.isEmpty() && "prompt".equals(field.control)) {
+            // Searchable multi-select (Workday): the walker selects each one.
+            field.answers = new ArrayList<>(profile.formSkills);
+            field.answer = String.join(", ", profile.formSkills);
+        } else if ((field.type == FieldType.TEXT || field.type == FieldType.TEXTAREA)
+                && SKILLS_BOX_LABEL.matcher(Text.normalize(label).replaceAll("[^a-z ]", "").trim()).matches()) {
+            field.answer = String.join(", ", profile.formSkills);
+        } else {
+            return false;
+        }
+        field.category = FieldCategory.FACTUAL;
+        field.source = AnswerSource.PROFILE;
+        field.note = "Your skills for applications (Profile › Skills).";
+        return true;
     }
 
     private static boolean applySavedAnswer(FormField field, UserProfile profile) {

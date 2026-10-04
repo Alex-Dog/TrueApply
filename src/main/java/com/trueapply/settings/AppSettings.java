@@ -148,6 +148,18 @@ public class AppSettings {
      * Whether TrueApply may create Workday candidate accounts by itself. Doing so ticks the
      * company's "I agree" box for account terms, so it is off until the user opts in.
      */
+    /**
+     * Whether multi-page forms (Workday) look ahead with temporary answers so all questions can be
+     * asked at once. The stand-ins sit in the site's draft until replaced; they're never submitted.
+     */
+    public boolean lookAhead() {
+        return bool("workday.lookAhead", true);
+    }
+
+    public void setLookAhead(boolean value) {
+        putBool("workday.lookAhead", value);
+    }
+
     public boolean createWorkdayAccounts() {
         return bool("workday.createAccounts", false);
     }

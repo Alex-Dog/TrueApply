@@ -246,7 +246,8 @@ public class ApplicationPipeline {
                 fields -> new FormAnswerer(ai.get()).answer(fields, profile, app.job),
                 settings.includeOptionalCreative(),
                 accounts,
-                settings.createWorkdayAccounts());
+                settings.createWorkdayAccounts(),
+                settings.lookAhead());
     }
 
     /** Optional questions nobody answered are skipped rather than blocking submission. */
