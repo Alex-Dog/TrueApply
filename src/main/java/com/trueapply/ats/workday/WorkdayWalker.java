@@ -192,7 +192,14 @@ final class WorkdayWalker {
             lastStep = step;
             if (sameStepCount >= 1 && !parked.isEmpty()) {
                 // A temporary answer wasn't accepted (e.g. a number was expected): stop looking ahead
-                // and ask about everything found so far.
+                // and ask about everything found so far. Log what the page shows, to see which one.
+                WorkdayDebugLog.recordPage(app, step, page, "page didn't advance with temporary answers: "
+                        + String.join("; ", visibleErrors()));
+                for (FormField f : parked) {
+                    if (!step.equals(f.group)) continue;
+                    String[] parts = f.key.split("\\|");
+                    WorkdayDebugLog.record(app, f, container(parts[1], Integer.parseInt(parts[2])), "parked here; page didn't advance");
+                }
                 return askUser("Workday didn't accept a temporary answer on “" + step + "”, so TrueApply stopped looking ahead there.");
             }
             if (sameStepCount >= 2) {
@@ -243,6 +250,8 @@ final class WorkdayWalker {
                 continue;
             }
             PageBanner.clear(page);
+            WorkdayDebugLog.note(app, "filled on “" + step + "”: " + filledThisVisit.size() + " field(s)"
+                    + (problems.isEmpty() ? "" : "; problems: " + problems));
             List<FormField> blocking = fields.stream()
                     .filter(f -> JobApplication.blocksSubmission(f, ctx.includeOptionalCreative()))
                     // A value already on the page is fine unless it's our own temporary stand-in.
@@ -258,6 +267,11 @@ final class WorkdayWalker {
             }
             if (!problems.isEmpty()) {
                 return handOffOrFail("Couldn't fill on “" + step + "”: " + String.join("; ", problems));
+            }
+            try {
+                refillLostValues(step, fields);
+            } catch (PageChanged moved) {
+                continue;
             }
             clickNext();
         }
@@ -400,6 +414,9 @@ final class WorkdayWalker {
 
     /** Hands every unanswered question collected so far (across pages) to the user. */
     private SubmissionResult askUser(String why) {
+        WorkdayDebugLog.note(app, "asking you" + (why == null ? "" : " (" + why + ")") + ": "
+                + app.fields.stream().filter(f -> JobApplication.blocksSubmission(f, ctx.includeOptionalCreative()))
+                        .map(f -> Text.truncate(f.label, 40)).toList());
         long count = app.pendingHumanFields(ctx.includeOptionalCreative());
         String looked = parked.isEmpty() ? " Workday reveals questions page by page, so more may follow."
                 : " TrueApply looked ahead through the form with temporary answers, which it replaces with yours"
@@ -701,9 +718,28 @@ final class WorkdayWalker {
             if (page.locator(NEXT_BUTTON_IDS).filter(visibleOnly()).count() > 0
                     || page.getByRole(AriaRole.BUTTON, new Page.GetByRoleOptions().setName(NEXT_BUTTON_TEXT))
                     .filter(visibleOnly()).count() > 0) {
-                return;
+                break;
             }
             page.waitForTimeout(500);
+        }
+        // The footer appears before the questions do (questionnaires load separately): wait until
+        // the number of visible questions stops changing, so a half-rendered page isn't read.
+        Instant settleBy = Instant.now().plusSeconds(10);
+        int last = -1;
+        int stableFor = 0;
+        while (Instant.now().isBefore(settleBy) && stableFor < 3) {
+            int count = visibleFieldCount();
+            stableFor = count == last && count > 0 ? stableFor + 1 : 0;
+            last = count;
+            page.waitForTimeout(500);
+        }
+    }
+
+    private int visibleFieldCount() {
+        try {
+            return page.locator("[data-automation-id^='formField-']").filter(visibleOnly()).count();
+        } catch (PlaywrightException e) {
+            return 0;
         }
     }
 
@@ -764,8 +800,10 @@ final class WorkdayWalker {
             if (field == null) {
                 field = toField(key, step, r);
                 if (field == null) continue;
+                // The same question under a new key (Workday renumbered it, or the step title changed):
+                // keep the user's answer instead of asking again.
+                if (!carryOverUserAnswer(field, pageKeys(raw, step))) fresh.add(field);
                 app.fields.add(field);
-                fresh.add(field);
             } else if (isSigningDate(r)) {
                 answerToday(field); // refresh it: the application may be resumed on a later day
             } else if ("checkbox".equals(field.control) && PREFERRED_NAME.matcher(field.label).find()) {
@@ -776,8 +814,18 @@ final class WorkdayWalker {
                 // Re-read the real choices; drop an earlier answer that isn't one of them.
                 List<String> current = dropdownOptions(r);
                 if (!current.isEmpty()) {
+                    List<String> before = field.options;
                     field.options = new ArrayList<>(current);
-                    if (field.hasAnswer() && OptionMatcher.bestMatch(current, field.answer) < 0) {
+                    if (field.hasAnswer() && OptionMatcher.bestMatch(current, field.answer) < 0 && isUserAnswer(field)) {
+                        // Never silently drop what the user chose: ask again, saying why.
+                        WorkdayDebugLog.record(app, field, container(r.get("id").toString(), ((Number) r.get("index")).intValue()),
+                                "user's answer not among re-read options " + current + " (before: " + before + ")");
+                        field.note = "Workday's choices for this question changed; your earlier answer “" + field.answer
+                                + "” isn't one of them now.";
+                        field.answer = null;
+                        field.category = FieldCategory.MISSING_INFO;
+                        field.source = AnswerSource.NONE;
+                    } else if (field.hasAnswer() && OptionMatcher.bestMatch(current, field.answer) < 0) {
                         field.answer = null;
                         field.category = FieldCategory.FACTUAL;
                         field.source = AnswerSource.NONE;
@@ -788,7 +836,17 @@ final class WorkdayWalker {
             pageFields.add(field);
         }
         // Entries removed since the last read (e.g. blank ones we deleted) shouldn't linger as questions.
-        app.fields.removeIf(f -> step.equals(f.group) && !present.contains(f.key));
+        // Never for the user's own answers: a question that's briefly missing (the page was still
+        // rendering) must not lose its answer and come back as a new question.
+        List<String> removed = app.fields.stream()
+                .filter(f -> step.equals(f.group) && !present.contains(f.key) && !isUserAnswer(f))
+                .map(f -> f.label).toList();
+        app.fields.removeIf(f -> step.equals(f.group) && !present.contains(f.key) && !isUserAnswer(f));
+        long keptAway = app.fields.stream().filter(f -> step.equals(f.group) && !present.contains(f.key)).count();
+        WorkdayDebugLog.note(app, "read “" + step + "”: " + raw.size() + " questions, " + fresh.size() + " new"
+                + (fresh.isEmpty() ? "" : " " + fresh.stream().map(f -> Text.truncate(f.label, 40)).toList())
+                + (removed.isEmpty() ? "" : "; gone from the page: " + removed)
+                + (keptAway == 0 ? "" : "; " + keptAway + " answered by you not showing (kept)"));
         if (!fresh.isEmpty()) {
             ctx.progress().accept("Reading " + fresh.size() + " questions on “" + step + "”…");
             ctx.answerer().accept(fresh);
@@ -802,6 +860,71 @@ final class WorkdayWalker {
             }
         }
         return pageFields;
+    }
+
+    /** Controls whose emptiness reliably means "no value" (a "No" checkbox is legitimately unticked). */
+    private static final java.util.Set<String> VALUE_CONTROLS = java.util.Set.of("text", "textarea", "dropdown", "date");
+
+    /**
+     * Some pages re-render their questions shortly after loading, which throws away what was just
+     * entered; Workday then rejects the page as incomplete. Before moving on, check that what we
+     * filled (or stood in) is still showing, and fill it again once if not.
+     */
+    @SuppressWarnings("unchecked")
+    private void refillLostValues(String step, List<FormField> fields) {
+        page.waitForTimeout(800);
+        java.util.Set<String> showing = new java.util.HashSet<>();
+        for (Map<String, Object> r : (List<Map<String, Object>>) page.evaluate(EXTRACT_JS)) {
+            if (Boolean.TRUE.equals(r.get("hasValue"))) showing.add(step + "|" + r.get("id") + "|" + r.get("index"));
+        }
+        List<FormField> lost = fields.stream()
+                .filter(f -> VALUE_CONTROLS.contains(Text.orEmpty(f.control)))
+                .filter(f -> parked.contains(f) || (f.hasAnswer() && filledThisVisit.contains(f.key)))
+                .filter(f -> !showing.contains(f.key))
+                .toList();
+        if (lost.isEmpty()) return;
+        WorkdayDebugLog.recordPage(app, step, page, "values disappeared after filling: "
+                + lost.stream().map(f -> f.label).toList() + "; filling again");
+        ctx.progress().accept("Workday cleared " + lost.size() + " answer(s) on “" + step + "”; filling them again…");
+        page.waitForTimeout(1_500);
+        List<FormField> answered = lost.stream().filter(f -> !parked.contains(f)).toList();
+        answered.forEach(f -> filledThisVisit.remove(f.key));
+        fillPage(answered);
+        List<FormField> standIns = lost.stream().filter(parked::contains).toList();
+        parked.removeAll(standIns);
+        parkAll(standIns);
+    }
+
+    private static boolean isUserAnswer(FormField f) {
+        return f.source == AnswerSource.USER || f.source == AnswerSource.SAVED_ANSWER;
+    }
+
+    private static java.util.Set<String> pageKeys(List<Map<String, Object>> raw, String step) {
+        java.util.Set<String> keys = new java.util.HashSet<>();
+        for (Map<String, Object> r : raw) keys.add(step + "|" + r.get("id") + "|" + r.get("index"));
+        return keys;
+    }
+
+    /**
+     * Copies the user's answer from an earlier copy of the same question (same label and control,
+     * under a key that isn't on this page) and drops that stale copy. False if there's none.
+     */
+    private boolean carryOverUserAnswer(FormField field, java.util.Set<String> keysOnPage) {
+        String label = Text.normalize(field.label);
+        for (FormField old : app.fields) {
+            if (keysOnPage.contains(old.key) || !old.hasAnswer() || !isUserAnswer(old)) continue;
+            if (!label.equals(Text.normalize(old.label)) || !java.util.Objects.equals(old.control, field.control)) continue;
+            if (!field.options.isEmpty() && field.type == FieldType.SINGLE_SELECT
+                    && OptionMatcher.bestMatch(field.options, old.answer) < 0) continue;
+            field.answer = old.answer;
+            field.answers = new ArrayList<>(old.answers);
+            field.category = old.category;
+            field.source = old.source;
+            field.note = old.note;
+            app.fields.remove(old);
+            return true;
+        }
+        return false;
     }
 
     private FormField toField(String key, String step, Map<String, Object> r) {
@@ -1505,9 +1628,38 @@ final class WorkdayWalker {
         throw new IllegalStateException("couldn't find Workday's Save and Continue button");
     }
 
+    /**
+     * Clicks "Save and Continue" and waits for the outcome: the next step, a validation error, or
+     * Workday's error page. Saving can take several seconds; a fixed short wait mistook a slow
+     * save for a rejected page.
+     */
     private void clickNext() {
+        String before = currentStep();
+        List<String> errorsBefore = visibleErrors(); // left over from an earlier attempt
+        Instant started = Instant.now();
         clickWithOverlayFallback(nextButton());
-        page.waitForTimeout(2_500);
+        Instant deadline = started.plusSeconds(20);
+        String outcome = "no change after 20s";
+        while (Instant.now().isBefore(deadline)) {
+            page.waitForTimeout(500);
+            String now = currentStep();
+            if (!now.equals(before) || isConfirmation()) {
+                outcome = "now on “" + now + "”";
+                break;
+            }
+            if (onErrorPage()) {
+                outcome = "Workday error page";
+                break;
+            }
+            List<String> errors = visibleErrors();
+            boolean fresh = !errors.equals(errorsBefore) || Instant.now().isAfter(started.plusSeconds(6));
+            if (!errors.isEmpty() && fresh) {
+                outcome = "errors: " + String.join("; ", errors);
+                break;
+            }
+        }
+        WorkdayDebugLog.note(app, "Save and Continue on “" + before + "”: " + outcome
+                + " (" + Duration.between(started, Instant.now()).toMillis() + " ms)");
     }
 
     // ---- finishing ----------------------------------------------------------------------------
@@ -1566,8 +1718,9 @@ final class WorkdayWalker {
         return lines[lines.length - 1].trim();
     }
 
+    /** The index counts visible containers only, the same way the page scan numbers them. */
     private Locator container(String automationId, int index) {
-        return page.locator("[data-automation-id='" + automationId + "']").nth(index);
+        return page.locator("[data-automation-id='" + automationId + "']").filter(visibleOnly()).nth(index);
     }
 
     private void clickButton(String automationId) {

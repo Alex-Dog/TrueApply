@@ -92,6 +92,11 @@ final class WorkdayDebugLog {
                 + " | url: " + safeUrl(page) + "\n\n");
     }
 
+    /** One line in the step-by-step trace of a run (what was read, what happened on Next). */
+    static void note(JobApplication app, String message) {
+        write("---- " + Instant.now() + " | " + (app.job == null ? "" : app.job.company) + " | " + message + "\n");
+    }
+
     private static String header(JobApplication app) {
         return "==== " + Instant.now() + " | " + (app.job == null ? "" : app.job.company + " | " + app.job.url) + "\n";
     }
