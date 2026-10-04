@@ -10,6 +10,8 @@ public enum ApplicationStatus {
     SUBMITTED("Submitted"),
     /** Form was filled but deliberately not submitted (dry-run setting). */
     DRY_RUN("Dry run"),
+    /** The browser was closed at the submit step; waiting for the user to say whether they applied. */
+    AWAITING_CONFIRMATION("Did you apply?"),
     FAILED("Failed");
 
     private final String displayName;

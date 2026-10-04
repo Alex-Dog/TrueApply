@@ -111,6 +111,61 @@ class WizardPipelineTest {
         }
     }
 
+    /** Reaches the submit step, then the user closes the browser. */
+    private static final class ClosingWizard implements ApplicationPlatform {
+        public AtsType type() { return AtsType.WORKDAY; }
+
+        public boolean questionsUpfront() { return false; }
+
+        public LoadedForm loadForm(Job job, UserProfile profile) {
+            return new LoadedForm(List.of(), "", "");
+        }
+
+        public SubmissionResult submit(JobApplication app, SubmissionContext ctx) {
+            return SubmissionResult.windowClosed("You closed the browser at Workday's Review page.");
+        }
+    }
+
+    @Test
+    void closingAtTheSubmitStepAsksWhetherTheUserApplied(@TempDir Path dir) throws Exception {
+        try (Database db = new Database(dir.resolve("t.db"))) {
+            SettingsRepository repo = new SettingsRepository(db);
+            AppSettings settings = new AppSettings(repo);
+            JobRepository jobs = new JobRepository(db);
+            ApplicationRepository apps = new ApplicationRepository(db, jobs);
+            ApplicationPipeline pipeline = new ApplicationPipeline(apps, new AccountRepository(db, new Vault(dir.resolve("k"))),
+                    jobs, new ProfileRepository(repo), settings, new PlatformRegistry().register(new ClosingWizard()), () -> NO_AI,
+                    new BrowserLauncher(settings), null, new AppEvents());
+            Job job = new Job();
+            job.dedupeKey = "workday:acme.wd1/site:R2";
+            job.source = "workday";
+            job.ats = AtsType.WORKDAY;
+            job.atsBoard = "acme.wd1/site";
+            job.atsJobId = "R2";
+            job.title = "Engineer";
+            job.company = "Acme";
+            job.url = "https://acme.wd1.myworkdayjobs.com/site/job/x/Engineer_R2";
+            jobs.insertIfNew(job);
+
+            pipeline.enqueue(List.of(job));
+            JobApplication app = waitFor(apps, ApplicationStatus.AWAITING_CONFIRMATION);
+
+            pipeline.returnToInbox(app, "not yet");
+            assertEquals(ApplicationStatus.NEEDS_INPUT, apps.find(app.id).orElseThrow().status);
+
+            pipeline.confirmApplied(app);
+            JobApplication done = apps.find(app.id).orElseThrow();
+            assertEquals(ApplicationStatus.SUBMITTED, done.status);
+            assertTrue(done.submittedAt != null);
+
+            pipeline.returnToInbox(done, "moved back from History"); // History → Inbox
+            JobApplication back = apps.find(app.id).orElseThrow();
+            assertEquals(ApplicationStatus.NEEDS_INPUT, back.status);
+            assertEquals(null, back.submittedAt);
+            pipeline.shutdown();
+        }
+    }
+
     private static JobApplication waitFor(ApplicationRepository apps, ApplicationStatus status) throws InterruptedException {
         Instant deadline = Instant.now().plusSeconds(10);
         while (Instant.now().isBefore(deadline)) {

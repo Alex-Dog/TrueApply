@@ -43,6 +43,8 @@ import java.util.function.Supplier;
  *                     └────────────── no ──────────→ READY ←───────────────────┘
  *                                                     ↓
  *                                   SUBMITTING → SUBMITTED | DRY_RUN | FAILED
+ *                                        ↓ browser closed at the submit step
+ *                              AWAITING_CONFIRMATION → (applied?) SUBMITTED | NEEDS_INPUT
  * </pre>
  * All work runs on one background thread, which also keeps Playwright single-threaded.
  */
@@ -126,6 +128,18 @@ public class ApplicationPipeline {
         applications.save(app);
         events.fireChanged();
         worker.submit(() -> submit(app.id));
+    }
+
+    /** The user says they finished applying (e.g. submitted it themselves before closing the browser). */
+    public void confirmApplied(JobApplication app) {
+        app.submittedAt = Instant.now();
+        setStatus(app, ApplicationStatus.SUBMITTED, "You finished applying in the browser.");
+    }
+
+    /** Back to the Inbox with its answers kept, to finish or resubmit later (also from History). */
+    public void returnToInbox(JobApplication app, String message) {
+        app.submittedAt = null;
+        setStatus(app, ApplicationStatus.NEEDS_INPUT, message);
     }
 
     public void retry(JobApplication app) {
@@ -220,6 +234,8 @@ public class ApplicationPipeline {
                 summarizeIfNeeded(app);
                 setStatus(app, ApplicationStatus.NEEDS_INPUT, result.message());
             }
+            case WINDOW_CLOSED -> setStatus(app, ApplicationStatus.AWAITING_CONFIRMATION,
+                    result.message() + " Did you finish applying to this job?");
             case NEEDS_HUMAN, FAILED -> setStatus(app, ApplicationStatus.FAILED, result.message());
         }
     }

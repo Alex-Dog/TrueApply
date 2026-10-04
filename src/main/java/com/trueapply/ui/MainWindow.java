@@ -3,6 +3,7 @@ package com.trueapply.ui;
 import atlantafx.base.theme.Styles;
 import com.trueapply.AppContext;
 import com.trueapply.model.ApplicationStatus;
+import com.trueapply.model.JobApplication;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Node;
@@ -67,6 +68,37 @@ public class MainWindow {
         nav.selectToggle(inboxButton);
         show(inbox);
         updateBadge();
+        askWhetherApplied();
+    }
+
+    /** Applications already asked about this session (a dismissed question stays in the Inbox). */
+    private final java.util.Set<Long> askedWhetherApplied = new java.util.HashSet<>();
+    private boolean asking;
+
+    /** When the user closed the browser at the submit step, ask right away whether they applied. */
+    private void askWhetherApplied() {
+        if (asking) return;
+        for (JobApplication app : ctx.applications.findByStatus(java.util.EnumSet.of(ApplicationStatus.AWAITING_CONFIRMATION))) {
+            if (!askedWhetherApplied.add(app.id)) continue;
+            asking = true;
+            // After the current event: showAndWait can't run inside some event/layout passes.
+            javafx.application.Platform.runLater(() -> {
+                try {
+                    String what = app.job == null ? "this job" : app.job.title + " at " + app.job.company;
+                    Ui.askYesNo("Did you finish applying to " + what + "?",
+                                    "You closed the browser at the submit step. Yes moves it to History;"
+                                            + " No keeps it in your Inbox so you can finish it later.")
+                            .ifPresent(applied -> {
+                                if (applied) ctx.pipeline.confirmApplied(app);
+                                else ctx.pipeline.returnToInbox(app, InboxView.NOT_FINISHED);
+                            });
+                } finally {
+                    asking = false;
+                }
+                askWhetherApplied(); // another one may be waiting
+            });
+            return;
+        }
     }
 
     public Node root() {
@@ -120,13 +152,15 @@ public class MainWindow {
 
     private void onDataChanged() {
         updateBadge();
+        askWhetherApplied();
         // Only data-driven pages refresh on background events; forms keep unsaved edits.
         if (current == inbox || current == history || current == discover) current.refresh();
     }
 
     private void updateBadge() {
         int count = ctx.applications.countByStatus(ApplicationStatus.NEEDS_INPUT)
-                + ctx.applications.countByStatus(ApplicationStatus.FAILED);
+                + ctx.applications.countByStatus(ApplicationStatus.FAILED)
+                + ctx.applications.countByStatus(ApplicationStatus.AWAITING_CONFIRMATION);
         inboxBadge.setText(String.valueOf(count));
         inboxBadge.setVisible(count > 0);
     }

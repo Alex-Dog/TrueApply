@@ -86,7 +86,7 @@ public final class Ui {
 
     public static Label statusChip(ApplicationStatus status) {
         String variant = switch (status) {
-            case NEEDS_INPUT -> "warning";
+            case NEEDS_INPUT, AWAITING_CONFIRMATION -> "warning";
             case SUBMITTED -> "success";
             case FAILED -> "danger";
             case DRY_RUN, READY -> "accent";
@@ -212,6 +212,14 @@ public final class Ui {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION, body, ButtonType.OK, ButtonType.CANCEL);
         alert.setHeaderText(header);
         return alert.showAndWait().filter(b -> b == ButtonType.OK).isPresent();
+    }
+
+    /** Yes / No question; empty if the dialog was closed without choosing. */
+    public static java.util.Optional<Boolean> askYesNo(String header, String body) {
+        Alert alert = new Alert(Alert.AlertType.CONFIRMATION, body, ButtonType.YES, ButtonType.NO);
+        alert.setTitle("TrueApply");
+        alert.setHeaderText(header);
+        return alert.showAndWait().filter(b -> b == ButtonType.YES || b == ButtonType.NO).map(b -> b == ButtonType.YES);
     }
 
     public static String rootMessage(Throwable t) {

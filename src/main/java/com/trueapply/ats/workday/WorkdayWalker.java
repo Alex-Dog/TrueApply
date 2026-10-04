@@ -1697,12 +1697,15 @@ final class WorkdayWalker {
     // ---- finishing ----------------------------------------------------------------------------
 
     private SubmissionResult review() {
+        reachedReview = true;
         if (ctx.dryRun()) {
             if (ctx.visible()) {
                 String note = "dry run is on, so nothing was submitted. Every page is filled and saved as a draft"
                         + " in your Workday account; review it, then close this window.";
                 ctx.progress().accept(note);
                 waitForClose(note);
+                if (isClosedOrConfirmed() == Boolean.TRUE) return SubmissionResult.submitted("Application submitted (you submitted it in the browser).");
+                return SubmissionResult.windowClosed("You closed the browser at Workday's Review page.");
             }
             return SubmissionResult.dryRun("Filled every Workday page and stopped at Review because dry run is on."
                     + " The draft is saved in your " + app.job.company + " Workday account.");
@@ -1725,7 +1728,11 @@ final class WorkdayWalker {
         Instant deadline = Instant.now().plus(HUMAN_TIMEOUT);
         try {
             while (Instant.now().isBefore(deadline)) {
-                if (page.isClosed()) return SubmissionResult.failed(reason);
+                if (page.isClosed()) {
+                    return reachedReview
+                            ? SubmissionResult.windowClosed("You closed the browser at Workday's submit step.")
+                            : SubmissionResult.failed(reason);
+                }
                 if (isConfirmation()) return SubmissionResult.submitted("Application submitted (finished in the browser).");
                 PageBanner.show(page, banner);
                 page.waitForTimeout(1_000);
@@ -1791,10 +1798,24 @@ final class WorkdayWalker {
         return page.locator(selector).filter(visibleOnly()).count() > 0;
     }
 
+    /** True once Review was reached in this run: from there on, closing the window may mean "I submitted". */
+    private boolean reachedReview;
+
+    /** TRUE if Workday shows its confirmation, FALSE if the window is closed, null otherwise. */
+    private Boolean isClosedOrConfirmed() {
+        try {
+            if (page.isClosed()) return Boolean.FALSE;
+            return isConfirmation() ? Boolean.TRUE : null;
+        } catch (PlaywrightException e) {
+            return Boolean.FALSE;
+        }
+    }
+
     private void waitForClose(String banner) {
         Instant deadline = Instant.now().plus(HUMAN_TIMEOUT);
         try {
             while (!page.isClosed() && Instant.now().isBefore(deadline)) {
+                if (isConfirmation()) return; // they submitted it themselves
                 PageBanner.show(page, banner);
                 page.waitForTimeout(500);
             }

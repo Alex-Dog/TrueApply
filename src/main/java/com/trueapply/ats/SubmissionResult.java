@@ -10,6 +10,11 @@ public record SubmissionResult(Outcome outcome, String message) {
         NEEDS_HUMAN,
         /** Reached questions only the user should answer; they are in the application's fields. */
         NEEDS_INPUT,
+        /**
+         * The user closed the browser after it reached the submit step, where they could have
+         * submitted it themselves; only they know whether they did.
+         */
+        WINDOW_CLOSED,
         FAILED
     }
 
@@ -27,6 +32,10 @@ public record SubmissionResult(Outcome outcome, String message) {
 
     public static SubmissionResult needsInput(String message) {
         return new SubmissionResult(Outcome.NEEDS_INPUT, message);
+    }
+
+    public static SubmissionResult windowClosed(String message) {
+        return new SubmissionResult(Outcome.WINDOW_CLOSED, message);
     }
 
     public static SubmissionResult failed(String message) {

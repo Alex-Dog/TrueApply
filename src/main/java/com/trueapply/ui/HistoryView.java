@@ -102,6 +102,9 @@ public class HistoryView implements View {
         }
         Button open = Ui.button("Open posting", Feather.EXTERNAL_LINK, Styles.FLAT);
         open.setOnAction(e -> Ui.openUrl(app.job == null ? null : app.job.url));
+        Button toInbox = Ui.button("Move back to Inbox", Feather.INBOX, Styles.FLAT);
+        toInbox.setOnAction(e -> ctx.pipeline.returnToInbox(app,
+                "Moved back from History. Your answers are kept; press Submit application to open it again, or Discard."));
         String sub = app.job == null ? "" : app.job.company
                 + (com.trueapply.util.Text.isBlank(app.job.location) ? "" : " · " + app.job.location);
 
@@ -118,7 +121,7 @@ public class HistoryView implements View {
 
         VBox content = new VBox(10,
                 Ui.title(app.job == null ? "Unknown job" : app.job.title),
-                Ui.row(Ui.muted(sub), Ui.statusChip(app.status), Ui.hgrow(), open),
+                Ui.row(Ui.muted(sub), Ui.statusChip(app.status), Ui.hgrow(), toInbox, open),
                 Ui.muted((app.status == ApplicationStatus.DRY_RUN ? "Filled (not submitted) " : "Submitted ")
                         + Ui.formatTime(app.submittedAt)
                         + (com.trueapply.util.Text.isBlank(app.statusMessage) ? "" : " — " + app.statusMessage)),

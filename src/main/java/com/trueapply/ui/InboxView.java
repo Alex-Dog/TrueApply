@@ -41,7 +41,11 @@ import java.util.Objects;
 /** Applications that need the user (creative questions), plus anything in flight or failed. */
 public class InboxView implements View {
     private static final EnumSet<ApplicationStatus> SHOWN = EnumSet.of(ApplicationStatus.NEEDS_INPUT,
-            ApplicationStatus.ANALYZING, ApplicationStatus.READY, ApplicationStatus.SUBMITTING, ApplicationStatus.FAILED);
+            ApplicationStatus.AWAITING_CONFIRMATION, ApplicationStatus.ANALYZING, ApplicationStatus.READY, ApplicationStatus.SUBMITTING, ApplicationStatus.FAILED);
+
+    /** Shown when the user says they didn't finish in the browser. */
+    public static final String NOT_FINISHED = "You didn't finish applying in the browser. Your answers are kept;"
+            + " press Submit application to open it again, or Discard.";
 
     private final AppContext ctx;
     private final ListView<JobApplication> list = new ListView<>();
@@ -80,7 +84,8 @@ public class InboxView implements View {
     public void refresh() {
         long selectedId = list.getSelectionModel().getSelectedItem() == null ? -1 : list.getSelectionModel().getSelectedItem().id;
         List<JobApplication> apps = new ArrayList<>(ctx.applications.findByStatus(SHOWN));
-        apps.sort(Comparator.comparing((JobApplication a) -> a.status != ApplicationStatus.NEEDS_INPUT)
+        apps.sort(Comparator.comparing((JobApplication a) -> a.status != ApplicationStatus.AWAITING_CONFIRMATION)
+                .thenComparing(a -> a.status != ApplicationStatus.NEEDS_INPUT)
                 .thenComparing(a -> a.updatedAt, Comparator.reverseOrder()));
         list.getItems().setAll(apps);
         JobApplication reselect = apps.stream().filter(a -> a.id == selectedId).findFirst().orElse(null);
@@ -180,8 +185,9 @@ public class InboxView implements View {
                 String detail = Text.isBlank(app.statusMessage)
                         ? "Everything else has been filled from your profile. Answer these in your own words, then submit."
                         : app.statusMessage; // e.g. Workday: more questions may follow on later pages
-                Message m = new Message(pending + " question" + (pending == 1 ? "" : "s") + " for you", detail,
-                        Ui.icon(Feather.EDIT_3));
+                String title = pending > 0 ? pending + " question" + (pending == 1 ? "" : "s") + " for you"
+                        : "Nothing left to answer";
+                Message m = new Message(title, detail, Ui.icon(Feather.EDIT_3));
                 m.getStyleClass().add(Styles.WARNING);
                 yield m;
             }
@@ -193,6 +199,18 @@ public class InboxView implements View {
                 Button discard = Ui.button("Discard", Feather.TRASH_2, Styles.FLAT);
                 discard.setOnAction(e -> discard(app));
                 yield new VBox(8, m, Ui.row(retry, discard));
+            }
+            case AWAITING_CONFIRMATION -> {
+                Message m = new Message("Did you finish applying to this job?",
+                        Text.orEmpty(app.statusMessage).replace(" Did you finish applying to this job?", "")
+                                + " Yes moves it to History; No keeps it here so you can finish it later.",
+                        Ui.icon(Feather.HELP_CIRCLE));
+                m.getStyleClass().add(Styles.WARNING);
+                Button yes = Ui.button("Yes, I applied", Feather.CHECK, Styles.ACCENT);
+                yes.setOnAction(e -> ctx.pipeline.confirmApplied(app));
+                Button no = Ui.button("No, not yet", Feather.X);
+                no.setOnAction(e -> ctx.pipeline.returnToInbox(app, NOT_FINISHED));
+                yield new VBox(8, m, Ui.row(yes, no));
             }
             case ANALYZING, READY, SUBMITTING -> {
                 Message m = new Message(app.status.displayName() + "…", Text.orEmpty(app.statusMessage), Ui.icon(Feather.LOADER));

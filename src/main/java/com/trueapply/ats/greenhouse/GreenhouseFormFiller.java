@@ -90,6 +90,10 @@ final class GreenhouseFormFiller {
             if (ctx.visible()) {
                 waitingFor("dry run is on, so nothing was submitted. Review the filled form, then close this window.");
                 waitForClose(HUMAN_TIMEOUT);
+                if (!page.isClosed() && isConfirmed()) {
+                    return SubmissionResult.submitted("Application submitted (you submitted it in the browser).");
+                }
+                if (page.isClosed()) return SubmissionResult.windowClosed("You closed the browser at the filled form.");
             }
             return SubmissionResult.dryRun(message);
         }
@@ -386,6 +390,7 @@ final class GreenhouseFormFiller {
         Instant deadline = Instant.now().plus(timeout);
         try {
             while (!page.isClosed() && Instant.now().isBefore(deadline)) {
+                if (isConfirmed()) return; // they submitted it themselves
                 PageBanner.show(page, bannerText);
                 page.waitForTimeout(500);
             }
