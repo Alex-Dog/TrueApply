@@ -10,29 +10,39 @@ import com.microsoft.playwright.PlaywrightException;
  */
 public final class PageBanner {
     private static final String SHOW_JS = """
-            (message) => {
+            ([text, background]) => {
               let bar = document.getElementById('trueapply-banner');
               if (!bar) {
                 bar = document.createElement('div');
                 bar.id = 'trueapply-banner';
                 Object.assign(bar.style, {
                   position: 'fixed', top: '0', left: '0', right: '0', zIndex: '2147483647',
-                  background: '#0969da', color: '#ffffff', font: '600 15px "Segoe UI", system-ui, sans-serif',
+                  color: '#ffffff', font: '600 15px "Segoe UI", system-ui, sans-serif',
                   padding: '12px 20px', boxShadow: '0 2px 10px rgba(0,0,0,.35)', pointerEvents: 'none',
                   lineHeight: '1.4'
                 });
                 document.documentElement.appendChild(bar);
               }
-              const text = 'TrueApply is waiting for you: ' + message;
+              bar.style.background = background;
               if (bar.textContent !== text) bar.textContent = text;
             }""";
 
     private PageBanner() {
     }
 
+    /** Blue bar: the user needs to do something. */
     public static void show(Page page, String message) {
+        render(page, "TrueApply is waiting for you: " + message, "#0969da");
+    }
+
+    /** Grey bar: TrueApply is busy (so a slow step doesn't look frozen). */
+    public static void working(Page page, String message) {
+        render(page, "TrueApply is working: " + message, "#57606a");
+    }
+
+    private static void render(Page page, String text, String background) {
         try {
-            if (!page.isClosed()) page.evaluate(SHOW_JS, message);
+            if (!page.isClosed()) page.evaluate(SHOW_JS, java.util.List.of(text, background));
         } catch (PlaywrightException ignored) {
             // page mid-navigation; the next call re-adds it
         }

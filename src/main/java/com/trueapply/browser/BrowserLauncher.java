@@ -18,9 +18,16 @@ import java.util.Map;
  */
 public class BrowserLauncher {
     private final AppSettings settings;
+    /** Carries sign-ins (session cookies included) from one run to the next; null to disable. */
+    private final CookieJar cookies;
 
     public BrowserLauncher(AppSettings settings) {
+        this(settings, null);
+    }
+
+    public BrowserLauncher(AppSettings settings, CookieJar cookies) {
         this.settings = settings;
+        this.cookies = cookies;
     }
 
     /** Must be used from a single thread for its whole life (Playwright isn't thread-safe). */
@@ -30,18 +37,23 @@ public class BrowserLauncher {
             Playwright playwright = Playwright.create(new Playwright.CreateOptions()
                     .setEnv(Map.of("PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD", "1")));
             try {
-                return new BrowserSession(playwright, launch(playwright, channel, visible));
+                return new BrowserSession(playwright, launch(playwright, channel, visible), cookies);
             } catch (PlaywrightException e) {
                 playwright.close(); // channel not installed — fall back to bundled Chromium
             }
         }
         Playwright playwright = Playwright.create();
         try {
-            return new BrowserSession(playwright, launch(playwright, null, visible));
+            return new BrowserSession(playwright, launch(playwright, null, visible), cookies);
         } catch (RuntimeException e) {
             playwright.close();
             throw e;
         }
+    }
+
+    /** Saves the browser's current cookies now, e.g. right after signing in to a site. */
+    public void rememberCookies(BrowserContext context) {
+        if (cookies != null) cookies.saveFrom(context);
     }
 
     private static BrowserContext launch(Playwright playwright, String channel, boolean visible) {

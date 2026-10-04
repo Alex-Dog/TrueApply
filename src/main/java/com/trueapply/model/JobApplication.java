@@ -21,12 +21,19 @@ public class JobApplication {
     public Instant updatedAt;
     public Instant submittedAt;
 
-    public long pendingHumanFields(boolean includeOptional) {
-        return fields.stream()
-                .filter(FormField::needsHuman)
-                .filter(f -> f.required || includeOptional)
-                .filter(f -> !f.hasAnswer())
-                .count();
+    public long pendingHumanFields(boolean includeOptionalCreative) {
+        return fields.stream().filter(f -> blocksSubmission(f, includeOptionalCreative)).count();
+    }
+
+    /**
+     * Whether an unanswered field holds the application for the user: required creative or
+     * missing-info fields always do; optional creative ones only when the user asked for that.
+     * Optional missing info (e.g. "Address Line 2") is simply left blank.
+     */
+    public static boolean blocksSubmission(FormField f, boolean includeOptionalCreative) {
+        if (!f.needsHuman() || f.hasAnswer()) return false;
+        if (f.required) return true;
+        return includeOptionalCreative && f.category == FieldCategory.CREATIVE;
     }
 
     public String displayTitle() {

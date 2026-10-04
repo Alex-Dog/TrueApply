@@ -79,6 +79,22 @@ class WorkdayTest {
     }
 
     @Test
+    void searchResultsArePickedOnlyWhenUnambiguous() {
+        List<String> schools = List.of("University of Michigan - Ann Arbor", "University of Michigan-Dearborn",
+                "University of Michigan-Flint", "Western Michigan University Homer Stryker M.D. School of Medicine");
+        WorkdayWalker.SearchPick umich = WorkdayWalker.pickSearchResult(schools, "University of Michigan");
+        assertNull(umich.choice()); // three campuses: ask, don't guess
+        assertEquals(3, umich.ambiguous().size());
+        assertEquals("University of Michigan - Ann Arbor",
+                WorkdayWalker.pickSearchResult(schools, "University of Michigan Ann Arbor").choice());
+
+        List<String> fields = List.of("Applied Computer Science", "Computer Science", "Computer Science and Mathematics");
+        assertEquals("Computer Science", WorkdayWalker.pickSearchResult(fields, "Computer Science").choice());
+
+        assertEquals(List.of("Agency"), WorkdayWalker.realOptions(List.of("No Items.", "Partial List (First 500 Entries)", "All", "Agency")));
+    }
+
+    @Test
     void playwrightErrorsBecomeReadable() {
         RuntimeException timeout = new RuntimeException("""
                 Error {

@@ -6,6 +6,7 @@ import com.trueapply.ats.PlatformRegistry;
 import com.trueapply.ats.greenhouse.GreenhousePlatform;
 import com.trueapply.ats.workday.WorkdayPlatform;
 import com.trueapply.browser.BrowserLauncher;
+import com.trueapply.browser.CookieJar;
 import com.trueapply.db.AccountRepository;
 import com.trueapply.db.ApplicationRepository;
 import com.trueapply.db.Database;
@@ -49,7 +50,8 @@ public final class AppContext implements AutoCloseable {
         profiles = new ProfileRepository(settingsRepo);
         jobs = new JobRepository(database);
         applications = new ApplicationRepository(database, jobs);
-        accounts = new AccountRepository(database, new Vault(AppPaths.vaultKey()));
+        Vault vault = new Vault(AppPaths.vaultKey());
+        accounts = new AccountRepository(database, vault);
         gmail = new GmailService(settings);
         platforms = new PlatformRegistry()
                 .register(new GreenhousePlatform())
@@ -61,7 +63,8 @@ public final class AppContext implements AutoCloseable {
                 new GreenhouseJobSource(settings),
                 new WorkdayJobSource(settings)), jobs, profiles, settings);
         pipeline = new ApplicationPipeline(applications, accounts, jobs, profiles, settings, platforms, this::ai,
-                new BrowserLauncher(settings), gmail, events);
+                new BrowserLauncher(settings, new CookieJar(AppPaths.root().resolve("browser-cookies.enc"), vault)),
+                gmail, events);
         reloadAi();
     }
 

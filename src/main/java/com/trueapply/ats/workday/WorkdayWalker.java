@@ -194,22 +194,32 @@ final class WorkdayWalker {
             }
 
             boolean experienceStep = step.toLowerCase().contains("experience");
-            if (experienceStep) {
-                prepareExperiencePage();
-                WorkdayDebugLog.recordStructure(app, step, page);
-            }
-            List<FormField> fields = readPage(step);
-            // Fill what we can first: leftover blank entries are only recognizable once the real ones are filled.
-            List<String> problems = fillPage(fields);
-            if (experienceStep && removeBlankEntries() > 0) {
-                page.waitForTimeout(1_000);
+            filledThisVisit.clear();
+            List<FormField> fields;
+            List<String> problems;
+            try {
+                if (experienceStep) {
+                    prepareExperiencePage();
+                    WorkdayDebugLog.recordStructure(app, step, page);
+                }
+                PageBanner.working(page, "reading the questions on this page…");
                 fields = readPage(step);
+                // Fill what we can first: leftover blank entries are only recognizable once the real ones are filled.
                 problems = fillPage(fields);
+                if (experienceStep && removeBlankEntries() > 0) {
+                    page.waitForTimeout(1_000);
+                    fields = readPage(step);
+                    problems = fillPage(fields);
+                }
+            } catch (PageChanged moved) {
+                // The wizard advanced on its own (it only does that once required fields are valid);
+                // carry on with whatever page we're on now.
+                ctx.progress().accept("Workday moved on from “" + step + "” early; continuing.");
+                continue;
             }
+            PageBanner.clear(page);
             List<FormField> blocking = fields.stream()
-                    .filter(FormField::needsHuman)
-                    .filter(f -> f.required || ctx.includeOptionalCreative())
-                    .filter(f -> !f.hasAnswer())
+                    .filter(f -> JobApplication.blocksSubmission(f, ctx.includeOptionalCreative()))
                     .filter(f -> !prefilled.contains(f.key))
                     .toList();
             if (!blocking.isEmpty()) {
@@ -234,11 +244,19 @@ final class WorkdayWalker {
             return Optional.of(SubmissionResult.failed("Workday says you've already applied to this job."));
         }
         if (!currentStep().isEmpty() || signInVisible()) return Optional.empty(); // already inside the flow
-        Locator apply = page.locator("[data-automation-id='adventureButton']");
-        if (!waitVisible(apply, 15_000)) {
+        Locator start = startButton(15_000);
+        if (start == null) {
+            WorkdayDebugLog.recordPage(app, "job posting", page, "no Apply / Continue Application button");
             return Optional.of(SubmissionResult.failed("This Workday posting has no Apply button (it may be closed)."));
         }
-        apply.first().click();
+        boolean continuing = CONTINUE_LABEL.matcher(Text.orEmpty(start.innerText())).find();
+        start.click();
+        if (continuing) {
+            // A draft exists (we're signed in from the last run): Workday reopens it at the saved step.
+            ctx.progress().accept("Continuing your saved Workday application…");
+            page.waitForTimeout(4_000);
+            return Optional.empty();
+        }
         // Prefer "Autofill with Resume": Workday parses the resume into work/education entries,
         // which beats clicking its "Add" buttons; every field is still checked against the profile.
         Locator autofill = page.locator("[data-automation-id='autofillWithResume']");
@@ -252,6 +270,29 @@ final class WorkdayWalker {
         }
         page.waitForTimeout(4_000);
         return Optional.empty();
+    }
+
+    private static final Pattern START_LABEL =
+            Pattern.compile("^\\s*(apply|apply now|continue application|continue)\\s*$", Pattern.CASE_INSENSITIVE);
+    private static final Pattern CONTINUE_LABEL = Pattern.compile("continue", Pattern.CASE_INSENSITIVE);
+
+    /**
+     * The posting's start button: "Apply" for a new application, "Continue Application" when a
+     * draft exists. Workday gives them different ids, so match the known ids or the label.
+     */
+    private Locator startButton(long timeoutMs) {
+        Instant deadline = Instant.now().plusMillis(timeoutMs);
+        while (Instant.now().isBefore(deadline)) {
+            Locator byId = page.locator("[data-automation-id='adventureButton'], [data-automation-id='continueButton'],"
+                    + " [data-automation-id='continueApplicationButton']").filter(visibleOnly());
+            if (byId.count() > 0) return byId.first();
+            for (AriaRole role : List.of(AriaRole.BUTTON, AriaRole.LINK)) {
+                Locator byLabel = page.getByRole(role, new Page.GetByRoleOptions().setName(START_LABEL)).filter(visibleOnly());
+                if (byLabel.count() > 0) return byLabel.first();
+            }
+            page.waitForTimeout(500);
+        }
+        return null;
     }
 
     // ---- accounts ----------------------------------------------------------------------------
@@ -313,7 +354,10 @@ final class WorkdayWalker {
         Instant deadline = Instant.now().plusSeconds(30);
         while (Instant.now().isBefore(deadline)) {
             page.waitForTimeout(1_000);
-            if (!signInVisible() && !currentStep().isEmpty()) return Optional.empty();
+            if (!signInVisible() && !currentStep().isEmpty()) {
+                rememberSignIn();
+                return Optional.empty();
+            }
             if (captchaVisible()) return waitForHumanSignIn("Please solve the captcha in the browser window.");
             List<String> errors = visibleErrors();
             if (!errors.isEmpty()) {
@@ -364,6 +408,7 @@ final class WorkdayWalker {
                 if (!signInVisible() && !currentStep().isEmpty()) {
                     PageBanner.clear(page);
                     saveTypedLogin(typed[0], typed[1]);
+                    rememberSignIn();
                     return Optional.empty();
                 }
                 PageBanner.show(page, message);
@@ -402,6 +447,11 @@ final class WorkdayWalker {
         account.notes = "Saved when you signed in to Workday through TrueApply";
         ctx.accounts().insert(account);
         ctx.progress().accept("Saved your " + app.job.company + " Workday login to Accounts.");
+    }
+
+    /** Saves cookies right away, so the sign-in survives even if the window is closed mid-run. */
+    private void rememberSignIn() {
+        if (ctx.browser() != null) ctx.browser().rememberCookies(page.context());
     }
 
     private Optional<SavedAccount> savedAccount() {
@@ -765,6 +815,16 @@ final class WorkdayWalker {
 
     // ---- filling ------------------------------------------------------------------------------
 
+    /** The wizard moved to another page while we were filling this one. */
+    static final class PageChanged extends RuntimeException {
+        PageChanged() {
+            super("the page changed");
+        }
+    }
+
+    /** Keys filled successfully during the current visit to a page (so a second pass skips them). */
+    private final java.util.Set<String> filledThisVisit = new java.util.HashSet<>();
+
     private List<String> fillPage(List<FormField> fields) {
         List<String> problems = new ArrayList<>();
         for (FormField field : fields) {
@@ -776,19 +836,43 @@ final class WorkdayWalker {
                 }
                 continue;
             }
+            if (filledThisVisit.contains(field.key)) continue;
+            // Stop at once if the wizard moved on (e.g. a stray key press submitted the page),
+            // instead of timing out on every field that's no longer there.
+            if (!field.group.equals(currentStep())) throw new PageChanged();
             String[] parts = field.key.split("\\|");
             Locator container = container(parts[1], Integer.parseInt(parts[2]));
+            if (container.count() == 0) {
+                if (field.required && !hadValue) problems.add(field.label + " (no longer on the page)");
+                continue;
+            }
+            PageBanner.working(page, "filling “" + Text.truncate(field.label, 70) + "”");
             try {
                 fill(container, field);
+                filledThisVisit.add(field.key);
             } catch (ChoiceNeeded e) {
+                // The value may have landed anyway (Enter auto-picks, or a slow re-render): check before asking.
+                if (promptHas(container, field.answer)) {
+                    closeList();
+                    continue;
+                }
                 // Turn it into an Inbox question with the picker's real options.
+                String tried = field.answer;
+                WorkdayDebugLog.record(app, field, container, "asked the user (" + e.choices.size() + " choices)");
                 field.options = new ArrayList<>(e.choices);
                 field.answer = null;
                 field.category = FieldCategory.MISSING_INFO;
                 field.source = AnswerSource.NONE;
-                field.note = "Workday wants a more specific answer here. Pick one, or type a specific value"
-                        + " (e.g. LinkedIn) and TrueApply will search for it. Tick Remember to reuse it at other companies.";
+                field.note = e.choices.isEmpty()
+                        ? "Workday's search found nothing for “" + tried + "”. Type the name the way Workday would list it"
+                          + " (TrueApply searches for what you type). Tick Remember to reuse it."
+                        : "Workday needs a more specific answer than “" + tried + "”. Pick one, or type a value"
+                          + " (e.g. LinkedIn) and TrueApply will search for it. Tick Remember to reuse it at other companies.";
             } catch (PlaywrightException | IllegalStateException e) {
+                if ("prompt".equals(field.control) && promptHas(container, field.answer)) {
+                    closeList(); // it took after all
+                    continue;
+                }
                 String reason = readableError(e);
                 WorkdayDebugLog.record(app, field, container, reason);
                 // A value Workday filled in itself is good enough when ours won't take.
@@ -839,10 +923,11 @@ final class WorkdayWalker {
         if (hasValue(input, typed, alsoAccepted)) return;
         for (int attempt = 0; attempt < 2; attempt++) {
             input.focus();
-            boolean focused = Boolean.TRUE.equals(input.evaluate("e => document.activeElement === e"));
-            if (!focused) {
+            if (!isFocused(input)) {
                 c.locator("[data-automation-id='" + displayId + "']").first().click(new Locator.ClickOptions().setForce(true));
             }
+            // Never type blind: digits typed elsewhere could land in another field or press a button.
+            if (!isFocused(input)) throw new IllegalStateException("couldn't focus the date field");
             if (!input.inputValue().isEmpty()) { // replace, don't prepend to, an existing value
                 if (attempt == 0) {
                     page.keyboard().press("Control+A");
@@ -903,7 +988,9 @@ final class WorkdayWalker {
         attempts.add(() -> input.evaluate("e => e.click()"));                     // DOM click on the input
         attempts.add(() -> {                                                     // keyboard, like a person tabbing in
             input.focus();
-            page.keyboard().press("Space");
+            // Only if the checkbox really has focus: a stray Space would press whatever button
+            // does (e.g. "Save and Continue").
+            if (isFocused(input)) page.keyboard().press("Space");
         });
         attempts.add(() -> input.locator("xpath=..").click(new Locator.ClickOptions().setForce(true))); // the drawn box
         String id = input.getAttribute("id");
@@ -920,6 +1007,14 @@ final class WorkdayWalker {
             if (isOn(input) == wanted) return;
         }
         throw new IllegalStateException("the " + (input.getAttribute("type")) + " wouldn't change");
+    }
+
+    private static boolean isFocused(Locator input) {
+        try {
+            return Boolean.TRUE.equals(input.evaluate("e => document.activeElement === e"));
+        } catch (PlaywrightException e) {
+            return false;
+        }
     }
 
     /** Checked state, trusting aria-checked too (Workday's components keep it in sync). */
@@ -963,9 +1058,14 @@ final class WorkdayWalker {
     private void choosePrompt(Locator c, String value) {
         List<String> path = splitPath(value);
         String leaf = path.getLast();
-        Locator selected = c.locator("[data-automation-id='selectedItem']");
-        // Already set to something matching (Workday pre-fills e.g. the phone country code)? Keep it.
-        if (selected.count() > 0 && OptionMatcher.bestMatch(selected.allInnerTexts(), leaf) >= 0) return;
+        // Already set to something matching (Workday pre-fills e.g. the phone country code, and
+        // restores saved draft answers a moment after the page loads)? Keep it.
+        Instant settle = Instant.now().plusMillis(2_000);
+        while (true) {
+            if (promptHas(c, leaf)) return;
+            if (Instant.now().isAfter(settle)) break;
+            page.waitForTimeout(250);
+        }
 
         Locator input = c.locator("input[data-automation-id='searchBox']");
         if (input.count() == 0) input = c.locator("input:not([type='hidden'])");
@@ -974,13 +1074,18 @@ final class WorkdayWalker {
         // 1. Browse the clean, unfiltered list. Typing first leaves a filter behind (or opens a
         //    category), and the list we'd read afterwards is no longer the real top level.
         List<String> top = openFreshList(c, input);
-        String first = exactOrBest(top, path.getFirst());
+        String first = exactOrBest(realOptions(top), path.getFirst());
         if (first != null) {
             List<String> chosen = new ArrayList<>(List.of(first));
             selectFromOpenList(c, first);
             for (int level = 1; level < 3; level++) {
                 page.waitForTimeout(800);
-                if (selected.count() > 0 || waitForOptions(c, 1_500).isEmpty()) return; // picked (list closed)
+                // Picked: the value shows as selected (multi-select lists stay open), or the list closed.
+                if (promptHas(c, chosen.getLast())) {
+                    closeList();
+                    return;
+                }
+                if (waitForOptions(c, 1_500).isEmpty()) return;
                 // It opened a category: pick the named item, or hand the full sub-list to the user.
                 List<String> sub = collectAllOptions(c);
                 String want = level < path.size() ? path.get(level) : null;
@@ -998,22 +1103,100 @@ final class WorkdayWalker {
             throw new IllegalStateException("couldn't pick “" + value + "”");
         }
 
-        // 2. Not a top-level entry (e.g. "LinkedIn" inside "Job Board"): use the search box.
+        // 2. Not a top-level entry (e.g. "LinkedIn" inside "Job Board", or a search-only picker like
+        //    School / Field of Study whose list is empty until you type): use the search box.
         page.keyboard().press("Escape");
         input.click(new Locator.ClickOptions().setForce(true));
         input.fill(leaf);
         input.press("Enter");
-        List<String> results = waitForOptions(c, 4_000);
-        String hit = exactOrBest(results, leaf);
-        if (hit != null && clickOptionText(c, hit)) {
+        waitForOptions(c, 4_000);
+        List<String> results = realOptions(collectAllOptions(c));
+        SearchPick pick = pickSearchResult(results, leaf);
+        if (pick.choice() != null && clickOptionText(c, pick.choice())) {
             page.waitForTimeout(800);
-            if (selected.count() > 0) return;
+            if (promptHas(c, pick.choice())) {
+                closeList();
+                return;
+            }
         }
 
-        // 3. Couldn't place it: show the user the real top-level choices.
+        // 3. Couldn't place it on our own: ask, offering the most useful real choices.
         input.fill("");
         page.keyboard().press("Escape");
-        throw new ChoiceNeeded(top);
+        if (!pick.ambiguous().isEmpty()) throw new ChoiceNeeded(pick.ambiguous());
+        throw new ChoiceNeeded(!results.isEmpty() ? results : realOptions(top));
+    }
+
+    /** Either one result to click, or several equally plausible ones to ask about. */
+    record SearchPick(String choice, List<String> ambiguous) {
+    }
+
+    /**
+     * Chooses among search results without guessing: an exact match, or the only result that
+     * starts with / contains the answer. Several such results ("University of Michigan" → Ann
+     * Arbor, Dearborn, Flint) come back as ambiguous so the user decides.
+     */
+    static SearchPick pickSearchResult(List<String> results, String want) {
+        String w = Text.normalize(want).replaceAll("[^a-z0-9+#]+", " ").trim();
+        if (w.isEmpty()) return new SearchPick(null, List.of());
+        List<String> keys = results.stream().map(r -> Text.normalize(r).replaceAll("[^a-z0-9+#]+", " ").trim()).toList();
+        for (int i = 0; i < keys.size(); i++) if (keys.get(i).equals(w)) return new SearchPick(results.get(i), List.of());
+        List<String> starts = new ArrayList<>();
+        List<String> contains = new ArrayList<>();
+        for (int i = 0; i < keys.size(); i++) {
+            if (keys.get(i).startsWith(w)) starts.add(results.get(i));
+            else if (keys.get(i).contains(w)) contains.add(results.get(i));
+        }
+        List<String> candidates = !starts.isEmpty() ? starts : contains;
+        if (candidates.size() == 1) return new SearchPick(candidates.getFirst(), List.of());
+        if (candidates.size() > 1) return new SearchPick(null, candidates);
+        int fuzzy = OptionMatcher.bestMatch(results, want); // e.g. "Computer Science and Engineering" → "Computer Science"
+        return fuzzy >= 0 ? new SearchPick(results.get(fuzzy), List.of()) : new SearchPick(null, List.of());
+    }
+
+    /** Drops Workday's placeholder rows ("No Items.", "Partial List (First 500 Entries)", "All"). */
+    static List<String> realOptions(List<String> options) {
+        return options.stream()
+                .filter(o -> !o.isBlank())
+                .filter(o -> !o.matches("(?i)no items\\.?|all|partial list.*|search results.*"))
+                .distinct()
+                .toList();
+    }
+
+    /**
+     * What a picker shows as chosen. Workday versions mark it differently: a "selectedItem" pill,
+     * a "selectedItemList", a "promptSelectionLabel", or a pill with a "Delete …" (×) button.
+     */
+    private static final String SELECTION_JS = """
+            c => {
+              const out = [];
+              const marks = c.querySelectorAll('[data-automation-id="selectedItem"], [data-automation-id="selectedItemList"] li,'
+                  + ' [data-automation-id="promptSelectionLabel"], [data-automation-id="DELETE_charm"], [aria-label^="Delete "],'
+                  + ' [data-automation-id="selectedItemList"] [data-automation-id="menuItem"]');
+              for (const e of marks) {
+                const text = ((e.innerText || '').trim() || (e.getAttribute('aria-label') || '').replace(/^Delete\\s+/i, '')).trim();
+                if (text) out.push(text);
+              }
+              return out;
+            }""";
+
+    /** True if the picker shows a selection matching {@code want} (any selection when want is null). */
+    @SuppressWarnings("unchecked")
+    private boolean promptHas(Locator c, String want) {
+        List<String> chosen;
+        try {
+            chosen = (List<String>) c.evaluate(SELECTION_JS);
+        } catch (PlaywrightException e) {
+            return false;
+        }
+        if (chosen.isEmpty()) return false;
+        return want == null || OptionMatcher.bestMatch(chosen, want) >= 0
+                || chosen.stream().anyMatch(t -> Text.normalize(t).contains(Text.normalize(want)));
+    }
+
+    private void closeList() {
+        page.keyboard().press("Escape");
+        page.waitForTimeout(200);
     }
 
     /** Clears any search text, opens the picker at its top level, and returns all its entries. */

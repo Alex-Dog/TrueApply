@@ -106,6 +106,24 @@ class FormAnswererTest {
     }
 
     @Test
+    void onlyRequiredOrOptedInCreativeQuestionsHoldAnApplication() {
+        FormField addressLine2 = new FormField("a2", "Address Line 2", FieldType.TEXT, false);
+        addressLine2.category = FieldCategory.MISSING_INFO;
+        FormField optionalEssay = new FormField("e", "Anything else?", FieldType.TEXTAREA, false);
+        optionalEssay.category = FieldCategory.CREATIVE;
+        FormField requiredSource = new FormField("s", "How did you hear about us?", FieldType.TEXT, true);
+        requiredSource.category = FieldCategory.MISSING_INFO;
+
+        // "Also hold for optional creative questions" must not drag optional missing info along.
+        assertTrue(!com.trueapply.model.JobApplication.blocksSubmission(addressLine2, true));
+        assertTrue(com.trueapply.model.JobApplication.blocksSubmission(optionalEssay, true));
+        assertTrue(!com.trueapply.model.JobApplication.blocksSubmission(optionalEssay, false));
+        assertTrue(com.trueapply.model.JobApplication.blocksSubmission(requiredSource, false));
+        requiredSource.answer = "LinkedIn";
+        assertTrue(!com.trueapply.model.JobApplication.blocksSubmission(requiredSource, false));
+    }
+
+    @Test
     void fieldsTheAiSkipsBecomeMissingInfo() {
         FormField salary = new FormField("q9", "Desired salary", FieldType.TEXT, true);
         new FormAnswerer(new FakeAi(new FieldDecisions(List.of()))).answer(List.of(salary), new UserProfile(), null);
