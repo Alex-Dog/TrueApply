@@ -993,6 +993,7 @@ final class WorkdayWalker {
         Locator container = container(r.get("id").toString(), ((Number) r.get("index")).intValue());
         Locator button = container.locator("button[aria-haspopup='listbox']").first();
         try {
+            closeOpenLists(container);
             button.click();
             waitForOptions(container, 3_000);
             List<String> texts = collectAllOptions(container).stream()
@@ -1019,7 +1020,25 @@ final class WorkdayWalker {
                 .filter(shown)
                 .filter(e => !e.closest('[data-automation-id="selectedItem"]'))
                 .filter(e => { const f = e.closest('[data-automation-id^="formField-"]'); return !f || f === field; });
-              const outer = candidates.filter(e => !candidates.some(o => o !== e && o.contains(e)));
+              let outer = candidates.filter(e => !candidates.some(o => o !== e && o.contains(e)));
+              // Several lists showing (another dropdown's is still open or closing): keep the one
+              // that opened next to this field.
+              const groups = new Map();
+              for (const e of outer) {
+                const g = e.closest('[role="listbox"]') || e.parentElement;
+                if (!groups.has(g)) groups.set(g, []);
+                groups.get(g).push(e);
+              }
+              if (groups.size > 1) {
+                const a = (field.querySelector('button[aria-haspopup], input:not([type="hidden"])') || field).getBoundingClientRect();
+                let best = null, bestDistance = Infinity;
+                for (const [g, items] of groups) {
+                  const r = g.getBoundingClientRect();
+                  const d = Math.min(Math.abs(r.top - a.bottom), Math.abs(r.bottom - a.top)) + Math.abs(r.left - a.left) / 4;
+                  if (d < bestDistance) { bestDistance = d; best = items; }
+                }
+                outer = best;
+              }
               outer.forEach((e, i) => e.setAttribute('data-trueapply-opt', String(i)));
               return outer.map(e => (e.innerText || '').trim());
             }""";
@@ -1358,12 +1377,25 @@ final class WorkdayWalker {
         Locator button = c.locator("button[aria-haspopup='listbox']").first();
         // Already showing the right value (e.g. Workday's defaults)? Leave it.
         if (OptionMatcher.bestMatch(List.of(button.innerText().trim()), value) == 0) return;
+        closeOpenLists(c);
         button.click();
         List<String> seen = waitForOptions(c, 3_000);
         if (!selectFromOpenList(c, value)) {
             page.keyboard().press("Escape");
             throw new IllegalStateException("no option matching “" + value + "” (saw "
                     + seen.stream().limit(8).toList() + (seen.size() > 8 ? "…" : "") + ")");
+        }
+    }
+
+    /**
+     * Option lists open outside their field, so a list still showing from the previous dropdown
+     * (closing, or left open) would be read as this one's options. Close it first.
+     */
+    private void closeOpenLists(Locator c) {
+        Instant until = Instant.now().plusMillis(2_500);
+        while (!openOptions(c).isEmpty() && Instant.now().isBefore(until)) {
+            page.keyboard().press("Escape");
+            page.waitForTimeout(250);
         }
     }
 
