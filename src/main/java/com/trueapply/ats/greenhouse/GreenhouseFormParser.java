@@ -101,15 +101,33 @@ public final class GreenhouseFormParser {
         return fields;
     }
 
+    /** Most schools a form gets; the filler adds entries with the section's "Add another" button. */
+    static final int MAX_EDUCATION_ENTRIES = 4;
+
+    /** One entry per school in the profile (inputs "school--0", "school--1"...); only the first can be required. */
     private static void addEducation(List<FormField> fields, UserProfile profile, boolean required) {
-        UserProfile.Education ed = profile.education.isEmpty() ? new UserProfile.Education() : profile.education.getFirst();
-        fields.add(sectionField("school--0", "School", FieldType.SINGLE_SELECT, required, ed.school, EDUCATION_GROUP));
-        fields.add(sectionField("degree--0", "Degree", FieldType.SINGLE_SELECT, required, ed.degree, EDUCATION_GROUP));
-        fields.add(sectionField("discipline--0", "Discipline", FieldType.SINGLE_SELECT, required, ed.fieldOfStudy, EDUCATION_GROUP));
-        fields.add(sectionField("start-year--0", "Education start year", FieldType.TEXT, false,
-                DateParts.parse(ed.startDate).year(), EDUCATION_GROUP));
-        fields.add(sectionField("end-year--0", "Education end year", FieldType.TEXT, false,
-                DateParts.parse(ed.endDate).year(), EDUCATION_GROUP));
+        List<UserProfile.Education> schools = profile.education.isEmpty()
+                ? List.of(new UserProfile.Education())
+                : profile.education.subList(0, Math.min(profile.education.size(), MAX_EDUCATION_ENTRIES));
+        for (int i = 0; i < schools.size(); i++) {
+            UserProfile.Education ed = schools.get(i);
+            boolean req = required && i == 0;
+            String n = i == 0 ? "" : " (" + (i + 1) + ")";
+            fields.add(sectionField("school--" + i, "School" + n, FieldType.SINGLE_SELECT, req, ed.school, EDUCATION_GROUP));
+            fields.add(sectionField("degree--" + i, "Degree" + n, FieldType.SINGLE_SELECT, req, ed.degree, EDUCATION_GROUP));
+            fields.add(sectionField("discipline--" + i, "Discipline" + n, FieldType.SINGLE_SELECT, req, ed.fieldOfStudy, EDUCATION_GROUP));
+            // Some companies ask month and year, others only the year; the filler skips inputs a form lacks.
+            DateParts start = DateParts.parse(ed.startDate);
+            DateParts end = DateParts.parse(ed.endDate);
+            fields.add(sectionField("start-month--" + i, "Education start month" + n, FieldType.SINGLE_SELECT, false,
+                    start.month(), EDUCATION_GROUP));
+            fields.add(sectionField("start-year--" + i, "Education start year" + n, FieldType.TEXT, false,
+                    start.year(), EDUCATION_GROUP));
+            fields.add(sectionField("end-month--" + i, "Education end month" + n, FieldType.SINGLE_SELECT, false,
+                    end.month(), EDUCATION_GROUP));
+            fields.add(sectionField("end-year--" + i, "Education end year" + n, FieldType.TEXT, false,
+                    end.year(), EDUCATION_GROUP));
+        }
     }
 
     private static void addEmployment(List<FormField> fields, UserProfile profile, boolean required) {

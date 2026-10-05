@@ -49,10 +49,31 @@ class SectionFieldsTest {
         List<FormField> fields = GreenhouseFormParser.parse(job, profile);
         assertEquals("Stanford University", byKey(fields, "school--0").answer);
         assertEquals("2023", byKey(fields, "end-year--0").answer);
+        assertEquals("June", byKey(fields, "end-month--0").answer);
         assertEquals("July", byKey(fields, "start-date-month-0").answer);
         assertEquals("Yes", byKey(fields, "current-role-0").answer);
         assertEquals(FieldCategory.SKIPPED, byKey(fields, "end-date-month-0").category);
         assertEquals(FieldCategory.PROFILE, byKey(fields, "degree--0").category);
+    }
+
+    @Test
+    void everySchoolGetsItsOwnEntry() throws Exception {
+        ObjectNode job = fixture();
+        job.put("education", "education_required");
+        UserProfile profile = new UserProfile();
+        for (String school : List.of("University of Michigan", "Washtenaw Community College")) {
+            UserProfile.Education ed = new UserProfile.Education();
+            ed.school = school;
+            ed.startDate = "Jan 2023";
+            profile.education.add(ed);
+        }
+        List<FormField> fields = GreenhouseFormParser.parse(job, profile);
+        assertEquals("University of Michigan", byKey(fields, "school--0").answer);
+        assertEquals("Washtenaw Community College", byKey(fields, "school--1").answer);
+        assertEquals("January", byKey(fields, "start-month--1").answer);
+        assertTrue(byKey(fields, "school--0").required);
+        assertEquals(false, byKey(fields, "school--1").required); // extra entries never block
+        assertEquals(FieldCategory.SKIPPED, byKey(fields, "degree--1").category);
     }
 
     @Test

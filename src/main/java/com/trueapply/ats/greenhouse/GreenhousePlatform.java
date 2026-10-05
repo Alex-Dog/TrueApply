@@ -37,6 +37,12 @@ public class GreenhousePlatform implements ApplicationPlatform {
     }
 
     @Override
+    public String loadDescription(Job job) throws IOException {
+        // Just the posting; loadForm also parses the questions and fetches the company blurb.
+        return Text.unescapeHtml(GreenhouseApi.jobWithQuestions(job.atsBoard, job.atsJobId).path("content").asText(""));
+    }
+
+    @Override
     public SubmissionResult submit(JobApplication application, SubmissionContext context) {
         Job job = application.job;
         context.progress().accept("Opening application form…");

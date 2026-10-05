@@ -371,7 +371,8 @@ public class InboxView implements View {
     }
 
     private void discard(JobApplication app) {
-        if (Ui.confirm("Discard this application?", app.displayTitle() + "\n\nYour answers for it will be deleted.")) {
+        if (Ui.confirm("Discard this application?", app.displayTitle()
+                + "\n\nYour answers for it will be deleted. The job goes back to Discover, so you can apply again later.")) {
             ctx.pipeline.discard(app);
         }
     }

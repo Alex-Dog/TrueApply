@@ -26,6 +26,7 @@ import java.time.Duration;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
+import java.util.List;
 
 /** Small helpers so views read as layout, not boilerplate. */
 public final class Ui {
@@ -38,6 +39,35 @@ public final class Ui {
 
     public static void init(HostServices services) {
         hostServices = services;
+    }
+
+    private static javafx.stage.Window mainWindow;
+    private static List<javafx.scene.image.Image> appIcons;
+
+    /** The app window: dialogs open centred over it and share its icon. */
+    public static void setMainWindow(javafx.stage.Stage stage) {
+        mainWindow = stage;
+        stage.getIcons().setAll(appIcons());
+    }
+
+    /** The app icon at the sizes Windows asks for (title bar, taskbar, Alt-Tab), scaled smoothly. */
+    public static List<javafx.scene.image.Image> appIcons() {
+        if (appIcons == null) {
+            var url = Ui.class.getResource("/icons/icon.png");
+            appIcons = url == null ? List.of() : java.util.stream.IntStream.of(16, 24, 32, 48, 64, 128, 256)
+                    .mapToObj(size -> new javafx.scene.image.Image(url.toExternalForm(), size, size, true, true))
+                    .toList();
+        }
+        return appIcons;
+    }
+
+    /** TrueApply's title and icon on a dialog, owned by the app window. */
+    public static void brand(javafx.scene.control.Dialog<?> dialog) {
+        if (dialog.getTitle() == null || dialog.getTitle().isBlank() || dialog instanceof Alert) dialog.setTitle("TrueApply");
+        if (mainWindow != null && dialog.getOwner() == null) dialog.initOwner(mainWindow);
+        if (dialog.getDialogPane().getScene().getWindow() instanceof javafx.stage.Stage stage) {
+            stage.getIcons().setAll(appIcons());
+        }
     }
 
     public static void openUrl(String url) {
@@ -175,12 +205,20 @@ public final class Ui {
         WebView view = new WebView();
         view.setContextMenuEnabled(false);
         view.setPrefHeight(height);
-        view.getEngine().loadContent("""
+        String page = """
                 <html><head><style>
                 body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 13px; line-height: 1.5;
                        color: #24292f; margin: 4px 8px; }
                 a { color: #0969da; }
-                </style></head><body>%s</body></html>""".formatted(html == null ? "" : html));
+                </style></head><body>%s</body></html>""".formatted(html == null ? "" : html);
+        view.getEngine().loadContent(page);
+        // A clicked link opens in the user's browser; the description stays put.
+        view.getEngine().locationProperty().addListener((o, was, now) -> {
+            if (now != null && (now.startsWith("http:") || now.startsWith("https:") || now.startsWith("mailto:"))) {
+                javafx.application.Platform.runLater(() -> view.getEngine().loadContent(page));
+                openUrl(now);
+            }
+        });
         return view;
     }
 
@@ -198,26 +236,64 @@ public final class Ui {
 
     public static void error(String header, Throwable error) {
         Alert alert = new Alert(Alert.AlertType.ERROR, rootMessage(error), ButtonType.OK);
+        brand(alert);
         alert.setHeaderText(header);
         alert.showAndWait();
     }
 
     public static void info(String header, String body) {
         Alert alert = new Alert(Alert.AlertType.INFORMATION, body, ButtonType.OK);
+        brand(alert);
         alert.setHeaderText(header);
         alert.showAndWait();
     }
 
     public static boolean confirm(String header, String body) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION, body, ButtonType.OK, ButtonType.CANCEL);
+        brand(alert);
         alert.setHeaderText(header);
         return alert.showAndWait().filter(b -> b == ButtonType.OK).isPresent();
+    }
+
+    /**
+     * A small notification in the bottom-right corner of the app that closes itself; for
+     * confirmations that don't need a decision. Falls back to a dialog outside the main window.
+     */
+    public static void toast(Node anyNodeInWindow, String message, Ikon icon, String style) {
+        javafx.scene.Scene scene = anyNodeInWindow == null ? null : anyNodeInWindow.getScene();
+        if (scene == null || !(scene.getRoot() instanceof javafx.scene.layout.StackPane layer)) {
+            info(message, "");
+            return;
+        }
+        atlantafx.base.controls.Notification toast = new atlantafx.base.controls.Notification(message, icon(icon));
+        toast.getStyleClass().addAll(style, Styles.ELEVATED_2);
+        toast.setPrefWidth(420);
+        toast.setMaxWidth(420);
+        toast.setMaxHeight(javafx.scene.layout.Region.USE_PREF_SIZE);
+        javafx.scene.layout.StackPane.setAlignment(toast, javafx.geometry.Pos.BOTTOM_RIGHT);
+        javafx.scene.layout.StackPane.setMargin(toast, new javafx.geometry.Insets(0, 24, 24, 0));
+        Runnable close = () -> {
+            if (!layer.getChildren().contains(toast)) return;
+            var out = atlantafx.base.util.Animations.fadeOutDown(toast, javafx.util.Duration.millis(250));
+            out.setOnFinished(e -> layer.getChildren().remove(toast));
+            out.playFromStart();
+        };
+        toast.setOnClose(e -> close.run());
+        layer.getChildren().add(toast);
+        atlantafx.base.util.Animations.fadeInUp(toast, javafx.util.Duration.millis(250)).playFromStart();
+        javafx.animation.PauseTransition stay = new javafx.animation.PauseTransition(javafx.util.Duration.seconds(4));
+        stay.setOnFinished(e -> close.run());
+        toast.hoverProperty().addListener((o, was, hovering) -> {
+            if (hovering) stay.stop();
+            else stay.playFromStart(); // read at your own pace
+        });
+        stay.play();
     }
 
     /** Yes / No question; empty if the dialog was closed without choosing. */
     public static java.util.Optional<Boolean> askYesNo(String header, String body) {
         Alert alert = new Alert(Alert.AlertType.CONFIRMATION, body, ButtonType.YES, ButtonType.NO);
-        alert.setTitle("TrueApply");
+        brand(alert);
         alert.setHeaderText(header);
         return alert.showAndWait().filter(b -> b == ButtonType.YES || b == ButtonType.NO).map(b -> b == ButtonType.YES);
     }

@@ -22,6 +22,11 @@ public interface ApplicationPlatform {
      */
     LoadedForm loadForm(Job job, UserProfile profile) throws IOException;
 
+    /** The posting's description as HTML, for showing before applying. */
+    default String loadDescription(Job job) throws IOException {
+        return loadForm(job, new UserProfile()).jobDescriptionHtml();
+    }
+
     /** Fills the form in a browser and, unless {@code context.dryRun()}, submits it. */
     SubmissionResult submit(JobApplication application, SubmissionContext context);
 

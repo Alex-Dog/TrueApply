@@ -88,6 +88,7 @@ public class AccountsView implements View {
     private void addAccount() {
         Dialog<SavedAccount> dialog = new Dialog<>();
         dialog.setTitle("Add account");
+        Ui.brand(dialog);
         dialog.setHeaderText("Save a job-site login");
         TextField company = new TextField();
         TextField site = new TextField();

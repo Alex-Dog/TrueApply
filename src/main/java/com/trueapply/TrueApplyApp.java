@@ -31,6 +31,7 @@ public class TrueApplyApp extends Application {
         Scene scene = new Scene(root, 1280, 820);
         scene.getStylesheets().add(Objects.requireNonNull(getClass().getResource("/styles/app.css")).toExternalForm());
         stage.setTitle("TrueApply");
+        Ui.setMainWindow(stage);
         stage.setMinWidth(980);
         stage.setMinHeight(640);
         stage.setScene(scene);

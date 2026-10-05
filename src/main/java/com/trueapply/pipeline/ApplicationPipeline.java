@@ -154,9 +154,10 @@ public class ApplicationPipeline {
         });
     }
 
+    /** Deletes the application; the job goes back to Discover so it can be applied to again. */
     public void discard(JobApplication app) {
         applications.delete(app.id);
-        jobs.updateStatus(app.jobId, Job.JobStatus.DISMISSED);
+        jobs.updateStatus(app.jobId, Job.JobStatus.NEW);
         events.fireChanged();
     }
 

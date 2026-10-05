@@ -15,13 +15,18 @@ import javafx.scene.control.Button;
 import javafx.scene.control.CheckBox;
 import javafx.scene.control.Label;
 import javafx.scene.control.ProgressIndicator;
+import javafx.scene.control.Separator;
+import javafx.scene.control.SplitPane;
 import javafx.scene.control.SelectionMode;
 import javafx.scene.control.TableCell;
 import javafx.scene.control.TableColumn;
 import javafx.scene.control.TableRow;
 import javafx.scene.control.TableView;
 import javafx.scene.control.TextField;
+import javafx.geometry.Insets;
+import javafx.scene.layout.HBox;
 import javafx.scene.layout.Priority;
+import javafx.scene.layout.StackPane;
 import javafx.scene.layout.VBox;
 import org.kordamp.ikonli.feather.Feather;
 
@@ -37,6 +42,9 @@ public class DiscoverView implements View {
     private final CheckBox showManual = new CheckBox("Show jobs I'd have to apply to myself");
     private final ProgressIndicator spinner = new ProgressIndicator();
     private final Button find = Ui.button("Find jobs", Feather.SEARCH, Styles.ACCENT);
+    private final StackPane details = new StackPane();
+    /** Descriptions fetched this session, by job id (switching back and forth is instant). */
+    private final java.util.Map<Long, String> descriptions = new java.util.HashMap<>();
     private final VBox root;
 
     public DiscoverView(AppContext ctx) {
@@ -63,13 +71,18 @@ public class DiscoverView implements View {
         dismiss.disableProperty().bind(table.getSelectionModel().selectedItemProperty().isNull());
 
         buildTable();
-        VBox.setVgrow(table, Priority.ALWAYS);
+        table.getSelectionModel().selectedItemProperty().addListener((o, a, job) -> showDetails(job));
+        showDetails(null);
+        details.setMinWidth(320);
+        SplitPane split = new SplitPane(table, details);
+        split.setDividerPositions(0.58);
+        VBox.setVgrow(split, Priority.ALWAYS);
         root = Ui.page("Discover",
                 "Matches for your job preferences from SimplifyJobs, Greenhouse company boards and Adzuna. "
                         + "Select jobs (Ctrl/Shift-click) and apply.",
                 Ui.row(find, spinner, Ui.hgrow(), showManual, filter),
                 status,
-                table,
+                split,
                 Ui.row(apply, dismiss, hiddenNote, Ui.hgrow(),
                         Ui.muted("Double-click a row to open the posting.")));
     }
@@ -102,6 +115,88 @@ public class DiscoverView implements View {
             });
             return row;
         });
+    }
+
+    // ---- job details ---------------------------------------------------------------------
+
+    private void showDetails(Job job) {
+        if (job == null) {
+            details.getChildren().setAll(Ui.muted("Select a job to see its description."));
+            return;
+        }
+        Label title = Ui.title(job.title);
+        title.setWrapText(true);
+        String where = Text.orEmpty(job.company) + (Text.isBlank(job.location) ? "" : " · " + job.location);
+        Label sub = Ui.muted(where);
+        sub.setWrapText(true);
+        Button open = Ui.button("Open posting", Feather.EXTERNAL_LINK, Styles.FLAT);
+        open.setOnAction(e -> Ui.openUrl(job.url));
+        HBox facts = Ui.row(Ui.chip(applyVia(job), canAutoApply(job) ? "success" : "neutral"));
+        if (job.postedAt != null) facts.getChildren().add(Ui.muted("Posted " + Ui.ago(job.postedAt)));
+        if (!Text.isBlank(job.jobType)) facts.getChildren().add(Ui.muted(job.jobType));
+        facts.getChildren().addAll(Ui.hgrow(), open);
+
+        StackPane body = new StackPane();
+        VBox.setVgrow(body, Priority.ALWAYS);
+        VBox pane = new VBox(8, title, sub, facts, new Separator(), body);
+        pane.setPadding(new Insets(12, 12, 12, 16));
+        details.getChildren().setAll(pane);
+
+        String cached = descriptions.get(job.id);
+        if (cached != null) {
+            body.getChildren().setAll(description(cached, job));
+            return;
+        }
+        var platform = ctx.platforms.forJob(job);
+        if (platform.isEmpty() || !job.isSupported()) {
+            body.getChildren().setAll(description(snippetHtml(job), job));
+            return;
+        }
+        ProgressIndicator loading = new ProgressIndicator();
+        loading.setPrefSize(28, 28);
+        body.getChildren().setAll(new VBox(8, loading, Ui.muted("Loading the description…")));
+        Background.run(() -> platform.get().loadDescription(job),
+                html -> {
+                    descriptions.put(job.id, Text.orEmpty(html));
+                    if (isShowing(job)) body.getChildren().setAll(description(html, job));
+                },
+                error -> {
+                    if (isShowing(job)) {
+                        body.getChildren().setAll(new VBox(8,
+                                Ui.muted("Couldn't load the description (" + Ui.rootMessage(error) + ")."),
+                                description(snippetHtml(job), job)));
+                    }
+                });
+    }
+
+    private boolean isShowing(Job job) {
+        Job selected = table.getSelectionModel().getSelectedItem();
+        return selected != null && selected.id == job.id;
+    }
+
+    /** Sources without a full description (Adzuna, SimplifyJobs) may still have a summary. */
+    private static String snippetHtml(Job job) {
+        return Text.isBlank(job.snippet) ? "" : "<p>" + escape(job.snippet) + "</p>";
+    }
+
+    private static Node description(String html, Job job) {
+        if (Text.isBlank(Text.stripHtml(Text.orEmpty(html)))) {
+            return Ui.muted("No description from this source. Use “Open posting” to read it on the company's site.");
+        }
+        javafx.scene.web.WebView view = Ui.html(html, 400);
+        view.setMaxHeight(Double.MAX_VALUE);
+        if (!job.isSupported()) {
+            Label note = Ui.muted("This is the summary the job source provides; the full posting is on the company's site.");
+            note.setWrapText(true);
+            VBox box = new VBox(8, note, view);
+            VBox.setVgrow(view, Priority.ALWAYS);
+            return box;
+        }
+        return view;
+    }
+
+    private static String escape(String text) {
+        return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
     }
 
     private boolean canAutoApply(Job job) {
@@ -183,14 +278,15 @@ public class DiscoverView implements View {
         List<Job> manual = selected.stream().filter(j -> !j.isSupported() || !ctx.platforms.supports(j.ats)).toList();
         int queued = ctx.pipeline.enqueue(selected);
         refresh();
-        String body = "Queued " + queued + " application" + (queued == 1 ? "" : "s") + ". "
-                + "Ones with creative questions will wait in your Inbox; the rest are submitted automatically"
-                + (ctx.settings.dryRun() ? " (dry run is on, so nothing is actually sent)." : ".");
+        manual.forEach(j -> Ui.openUrl(j.url));
+        String message = queued > 0
+                ? "Queued " + queued + " application" + (queued == 1 ? "" : "s") + ". Follow along in your Inbox."
+                : "";
         if (!manual.isEmpty()) {
-            body += "\n\n" + manual.size() + " job(s) aren't on a supported site yet; opening them so you can apply manually.";
-            manual.forEach(j -> Ui.openUrl(j.url));
+            message += (message.isEmpty() ? "" : " ") + "Opened " + manual.size() + " posting" + (manual.size() == 1 ? "" : "s")
+                    + " in your browser to apply yourself.";
         }
-        Ui.info("Applications queued", body);
+        if (!message.isEmpty()) Ui.toast(table, message, Feather.CHECK_CIRCLE, Styles.SUCCESS);
     }
 
     private void dismissSelected() {

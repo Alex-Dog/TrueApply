@@ -41,7 +41,7 @@ final class GreenhouseFormFiller {
     private static final Duration CONFIRM_TIMEOUT = Duration.ofSeconds(45);
     /** Education/employment inputs; which of them exist varies by company, so absent ones are skipped. */
     private static final Pattern SECTION_FIELD = Pattern.compile(
-            "^(school|degree|discipline|start-year|end-year)--\\d+$"
+            "^(school|degree|discipline|start-month|start-year|end-month|end-year)--\\d+$"
                     + "|^(company-name|title|start-date-month|start-date-year|end-date-month|end-date-year|current-role)-\\d+$");
 
     private final Page page;
@@ -140,6 +140,8 @@ final class GreenhouseFormFiller {
             else box.uncheck();
             return;
         }
+        int entry = Integer.parseInt(key.substring(key.lastIndexOf('-') + 1));
+        if (key.contains("--") && entry > 0) addEducationEntries(entry);
         Locator el = byId(key);
         waitAttached(el, 2_000);
         if (el.count() == 0 || !el.isVisible()) return; // this company's form doesn't ask it
@@ -156,6 +158,20 @@ final class GreenhouseFormFiller {
             chooseOption(key, List.of(field.answer), List.of("Other", "Discipline Unknown"));
         } else {
             chooseOption(key, List.of(field.answer), List.of());
+        }
+    }
+
+    /** Clicks the Education section's "Add another" until entry {@code index} exists (school--{index}). */
+    private void addEducationEntries(int index) {
+        Locator add = page.locator(".education--container button.add-another-button");
+        if (add.count() == 0) {
+            add = page.locator(".education--container").getByRole(AriaRole.BUTTON,
+                    new Locator.GetByRoleOptions().setName(Pattern.compile("add another", Pattern.CASE_INSENSITIVE)));
+        }
+        for (int attempt = 0; attempt <= index && page.locator("input[id^='school--']").count() <= index; attempt++) {
+            if (add.count() == 0) return; // this form takes one school only
+            add.first().click();
+            waitAttached(byId("school--" + index), 2_000);
         }
     }
 
